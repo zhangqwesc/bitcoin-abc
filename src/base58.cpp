@@ -257,6 +257,7 @@ CTxDestination DecodeDestination(const std::string &str,
     }
     return CNoDestination();
 }
+
 } // namespace
 
 void CBitcoinSecret::SetKey(const CKey &vchSecret) {
@@ -298,4 +299,29 @@ std::string EncodeLegacyAddr(const CTxDestination &dest,
 CTxDestination DecodeLegacyAddr(const std::string &str,
                                 const CChainParams &params) {
     return DecodeDestination(str, params);
+}
+
+bool GetDestinationIndexKey(const CChainParams &params, const std::string &dest, uint160& hashBytes, int& type) {
+    std::vector<uint8_t> data;
+    if (!DecodeBase58Check(dest, data)) {
+        return false;
+    }
+    // Base58Check decoding
+    const std::vector<uint8_t> &pubkey_prefix =
+        params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
+    if (data.size() == 20 + pubkey_prefix.size() &&
+        std::equal(pubkey_prefix.begin(), pubkey_prefix.end(), data.begin())) {
+        memcpy(hashBytes.begin(), &data[pubkey_prefix.size()], 20);
+        type = 1;
+        return true;
+    }
+    const std::vector<uint8_t> &script_prefix =
+        params.Base58Prefix(CChainParams::SCRIPT_ADDRESS);
+    if (data.size() == 20 + script_prefix.size() &&
+        std::equal(script_prefix.begin(), script_prefix.end(), data.begin())) {
+        memcpy(hashBytes.begin(), &data[script_prefix.size()], 20);
+        type = 2;
+        return true;
+    }
+    return false;
 }

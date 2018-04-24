@@ -42,6 +42,10 @@ public:
         amount -= a.amount;
         return *this;
     }
+    Amount &operator=(const int a) {
+        amount = a;
+        return *this;
+    }
 
     /**
      * Equality
@@ -51,6 +55,9 @@ public:
     }
     friend constexpr bool operator!=(const Amount a, const Amount b) {
         return !(a == b);
+    }
+    friend constexpr bool operator==(const Amount a, const int b) {
+        return a.amount == b;
     }
 
     /**
@@ -92,6 +99,9 @@ public:
     }
     friend constexpr Amount operator*(const int a, const Amount b) {
         return Amount(a * b.amount);
+    }
+    friend constexpr Amount operator*(const Amount a, const int b) {
+        return Amount(a.amount * b);
     }
 
     /**
