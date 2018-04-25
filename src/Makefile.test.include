@@ -74,6 +74,7 @@ BITCOIN_TESTS =\
   test/scheduler_tests.cpp \
   test/script_antireplay_tests.cpp \
   test/script_P2SH_tests.cpp \
+  test/script_P2PKH_tests.cpp \
   test/script_tests.cpp \
   test/script_sighashtype_tests.cpp \
   test/scriptflags.cpp \
