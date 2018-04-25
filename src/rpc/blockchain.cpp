@@ -13,6 +13,7 @@
 #include "coins.h"
 #include "config.h"
 #include "consensus/validation.h"
+#include "dstencode.h"
 #include "hash.h"
 #include "policy/policy.h"
 #include "primitives/transaction.h"
