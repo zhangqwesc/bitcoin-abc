@@ -602,6 +602,8 @@ public:
      */
     unsigned int GetSigOpCount(const CScript &scriptSig) const;
 
+    bool IsPayToPublicKeyHash() const;
+
     bool IsPayToScriptHash() const;
     bool IsCommitment(const std::vector<uint8_t> &data) const;
     bool IsWitnessProgram(int &version, std::vector<uint8_t> &program) const;
