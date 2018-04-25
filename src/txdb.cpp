@@ -320,22 +320,22 @@ bool CBlockTreeDB::ReadAddressUnspentIndex(uint160 addressHash, int type,
     return true;
 }
 
-bool CBlockTreeDB::WriteAddressIndex(const std::vector<std::pair<CAddressIndexKey, CAmount > >&vect) {
+bool CBlockTreeDB::WriteAddressIndex(const std::vector<std::pair<CAddressIndexKey, Amount > >&vect) {
     CDBBatch batch(*this);
-    for (std::vector<std::pair<CAddressIndexKey, CAmount> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+    for (std::vector<std::pair<CAddressIndexKey, Amount> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
         batch.Write(std::make_pair(DB_ADDRESSINDEX, it->first), it->second);
     return WriteBatch(batch);
 }
 
-bool CBlockTreeDB::EraseAddressIndex(const std::vector<std::pair<CAddressIndexKey, CAmount > >&vect) {
+bool CBlockTreeDB::EraseAddressIndex(const std::vector<std::pair<CAddressIndexKey, Amount > >&vect) {
     CDBBatch batch(*this);
-    for (std::vector<std::pair<CAddressIndexKey, CAmount> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
+    for (std::vector<std::pair<CAddressIndexKey, Amount> >::const_iterator it=vect.begin(); it!=vect.end(); it++)
         batch.Erase(std::make_pair(DB_ADDRESSINDEX, it->first));
     return WriteBatch(batch);
 }
 
 bool CBlockTreeDB::ReadAddressIndex(uint160 addressHash, int type,
-                                    std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex,
+                                    std::vector<std::pair<CAddressIndexKey, Amount> > &addressIndex,
                                     int start, int end) {
 
     boost::scoped_ptr<CDBIterator> pcursor(NewIterator());
@@ -353,7 +353,7 @@ bool CBlockTreeDB::ReadAddressIndex(uint160 addressHash, int type,
             if (end > 0 && key.second.blockHeight > end) {
                 break;
             }
-            CAmount nValue;
+            Amount nValue;
             if (pcursor->GetValue(nValue)) {
                 addressIndex.push_back(std::make_pair(key.second, nValue));
                 pcursor->Next();
