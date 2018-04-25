@@ -1977,9 +1977,9 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
     bool fReindexChainState = gArgs.GetBoolArg("-reindex-chainstate", false);
 
     // block tree db settings
-    int dbMaxOpenFiles = GetArg("-dbmaxopenfiles", DEFAULT_DB_MAX_OPEN_FILES);
-    bool dbCompression = GetBoolArg("-dbcompression", DEFAULT_DB_COMPRESSION);
-    size_t dbMaxFileSize = GetArg("-dbmaxfilesize", DEFAULT_DB_MAX_FILE_SIZE) << 20;
+    int dbMaxOpenFiles = gArgs.GetArg("-dbmaxopenfiles", DEFAULT_DB_MAX_OPEN_FILES);
+    bool dbCompression = gArgs.GetBoolArg("-dbcompression", DEFAULT_DB_COMPRESSION);
+    size_t dbMaxFileSize = gArgs.GetArg("-dbmaxfilesize", DEFAULT_DB_MAX_FILE_SIZE) << 20;
 
     LogPrintf("Block index database configuration:\n");
     LogPrintf("* Using %d max open files\n", dbMaxOpenFiles);
