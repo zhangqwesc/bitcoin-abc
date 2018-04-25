@@ -80,7 +80,7 @@ static leveldb::Options GetOptions(size_t nCacheSize, bool compression, int maxO
     // up to two write buffers may be held in memory simultaneously
     options.write_buffer_size = nCacheSize / 4;
     options.filter_policy = leveldb::NewBloomFilterPolicy(10);
-    options.compression = compression ? leveldb::kSnappyCompression, leveldb::kNoCompression;
+    options.compression = compression ? leveldb::kSnappyCompression : leveldb::kNoCompression;
     options.max_open_files = maxOpenFiles;
     options.max_file_size = maxFileSize;
     options.info_log = new CBitcoinLevelDBLogger();
