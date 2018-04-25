@@ -152,7 +152,7 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                     } else {
                         continue;
                     }
-                    delta.push_back(Pair("satoshis", -1 * spentInfo.satoshis));
+                    delta.push_back(Pair("satoshis", -1 * spentInfo.satoshis.GetSatoshis()));
                     delta.push_back(Pair("index", (int)j));
                     delta.push_back(Pair("prevtxid", input.prevout.hash.GetHex()));
                     delta.push_back(Pair("prevout", (int)input.prevout.n));
@@ -784,7 +784,7 @@ UniValue getblockdeltas(const Config &config, const JSONRPCRequest& request)
     if (fHavePruned && !(pblockindex->nStatus & BLOCK_HAVE_DATA) && pblockindex->nTx > 0)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Block not available (pruned data)");
 
-    if(!ReadBlockFromDisk(block, pblockindex, Params().GetConsensus()))
+    if(!ReadBlockFromDisk(block, pblockindex, config))
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Can't read block from disk");
 
     return blockToDeltasJSON(block, pblockindex);
