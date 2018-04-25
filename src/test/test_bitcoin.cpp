@@ -79,7 +79,7 @@ TestingSetup::TestingSetup(const std::string &chainName)
     fs::create_directories(pathTemp);
     gArgs.ForceSetArg("-datadir", pathTemp.string());
     mempool.setSanityCheck(1.0);
-    pblocktree = new CBlockTreeDB(1 << 20, true);
+    pblocktree = new CBlockTreeDB(1 << 20, true, false, false, 64, 1 << 30);
     pcoinsdbview = new CCoinsViewDB(1 << 23, true);
     pcoinsTip = new CCoinsViewCache(pcoinsdbview);
     if (!InitBlockIndex(config)) {
