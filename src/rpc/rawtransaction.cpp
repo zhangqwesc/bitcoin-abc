@@ -97,7 +97,7 @@ void TxToJSONExpanded(const Config& config, const CTransaction& tx, const uint25
             CSpentIndexKey spentKey(txin.prevout.hash, txin.prevout.n);
             if (GetSpentIndex(spentKey, spentInfo)) {
                 in.push_back(Pair("value", ValueFromAmount(spentInfo.satoshis)));
-                in.push_back(Pair("valueSat", spentInfo.satoshis));
+                in.push_back(Pair("valueSat", spentInfo.satoshis.GetSatoshis()));
                 if (spentInfo.addressType == 1) {
                     in.push_back(Pair("address", EncodeDestination(CKeyID(spentInfo.addressHash))));
                 } else if (spentInfo.addressType == 2)  {
@@ -131,7 +131,7 @@ void TxToJSONExpanded(const Config& config, const CTransaction& tx, const uint25
         out.push_back(Pair("valueSat", txout.nValue.GetSatoshis()));
         out.push_back(Pair("n", (int64_t)i));
         UniValue o(UniValue::VOBJ);
-        ScriptPubKeyToJSON(txout.scriptPubKey, o, true);
+        ScriptPubKeyToJSON(config, txout.scriptPubKey, o, true);
         out.push_back(Pair("scriptPubKey", o));
 
         // Add spent information if spentindex is enabled
