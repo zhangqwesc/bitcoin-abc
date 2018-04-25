@@ -1994,7 +1994,7 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
     // total cache cannot be greater than nMaxDbcache
     nTotalCache = std::min(nTotalCache, nMaxDbCache << 20);
     int64_t nBlockTreeDBCache = nTotalCache / 8;
-    if (GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX) || GetBoolArg("-spentindex", DEFAULT_SPENTINDEX)) {
+    if (gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX) || gArgs.GetBoolArg("-spentindex", DEFAULT_SPENTINDEX)) {
         // enable 3/4 of the cache if addressindex and/or spentindex is enabled
         nBlockTreeDBCache = nTotalCache * 3 / 4;
     } else { 
@@ -2091,19 +2091,19 @@ bool AppInitMain(Config &config, boost::thread_group &threadGroup,
                 }
 
                 // Check for changed -addressindex state
-                if (fAddressIndex != GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX)) {
+                if (fAddressIndex != gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX)) {
                     strLoadError = _("You need to rebuild the database using -reindex-chainstate to change -addressindex");
                     break;
                 }
 
                 // Check for changed -spentindex state
-                if (fSpentIndex != GetBoolArg("-spentindex", DEFAULT_SPENTINDEX)) {
+                if (fSpentIndex != gArgs.GetBoolArg("-spentindex", DEFAULT_SPENTINDEX)) {
                     strLoadError = _("You need to rebuild the database using -reindex-chainstate to change -spentindex");
                     break;
                 }
 
                 // Check for changed -timestampindex state
-                if (fTimestampIndex != GetBoolArg("-timestampindex", DEFAULT_TIMESTAMPINDEX)) {
+                if (fTimestampIndex != gArgs.GetBoolArg("-timestampindex", DEFAULT_TIMESTAMPINDEX)) {
                     strLoadError = _("You need to rebuild the database using -reindex-chainstate to change -timestampindex");
                     break;
                 }
