@@ -47,8 +47,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
     def run_test(self):
         self.test = TestManager(self, self.options.tmpdir)
         self.test.add_all_connections(self.nodes)
-        # Start up network handling in another thread
-        NetworkThread().start()
+        network_thread_start()
         self.nodes[0].setmocktime(REPLAY_PROTECTION_START_TIME)
         self.test.run()
 
@@ -107,6 +106,7 @@ class ReplayProtectionTest(ComparisonTestFramework):
             block = self.blocks[block_number]
             block.vtx.extend(new_transactions)
             old_sha256 = block.sha256
+            make_conform_to_ctor(block)
             block.hashMerkleRoot = block.calc_merkle_root()
             block.solve()
             # Update the internal state just like in next_block

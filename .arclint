@@ -5,6 +5,8 @@
         },
         "clang-format": {
             "type": "clang-format",
+            "version": "7.0",
+            "bin": ["clang-format-7", "clang-format"],
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)"
@@ -13,6 +15,19 @@
         "autopep8": {
             "type": "autopep8",
             "include": "(\\.py$)"
+        },
+        "lint-format-strings": {
+            "type": "script-and-regex",
+            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "exclude": [
+                "(^src/(secp256k1|univalue|leveldb)/)"
+            ],
+            "script-and-regex.script": "test/lint/lint-format-strings.sh",
+            "script-and-regex.regex": "/^(?P<file>.+): (?P<message>.+:.+)$/m"
+        },
+        "check-doc": {
+            "type": "check-doc",
+            "include": "(^src/.*\\.(h|c|cpp)$)"
         }
     }
 }

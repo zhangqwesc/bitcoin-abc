@@ -104,15 +104,11 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
     hlayout->addWidget(typeWidget);
 
     addressWidget = new QLineEdit(this);
-#if QT_VERSION >= 0x040700
     addressWidget->setPlaceholderText(tr("Enter address or label to search"));
-#endif
     hlayout->addWidget(addressWidget);
 
     amountWidget = new QLineEdit(this);
-#if QT_VERSION >= 0x040700
     amountWidget->setPlaceholderText(tr("Min amount"));
-#endif
     if (platformStyle->getUseExtraSpacing()) {
         amountWidget->setFixedWidth(97);
     } else {
@@ -249,9 +245,11 @@ void TransactionView::setModel(WalletModel *_model) {
                 QString host =
                     QUrl(listUrls[i].trimmed(), QUrl::StrictMode).host();
                 if (!host.isEmpty()) {
-                    QAction *thirdPartyTxUrlAction =
-                        new QAction(host, this); // use host as menu item label
-                    if (i == 0) contextMenu->addSeparator();
+                    // use host as menu item label
+                    QAction *thirdPartyTxUrlAction = new QAction(host, this);
+                    if (i == 0) {
+                        contextMenu->addSeparator();
+                    }
                     contextMenu->addAction(thirdPartyTxUrlAction);
                     connect(thirdPartyTxUrlAction, SIGNAL(triggered()),
                             mapperThirdPartyTxUrls, SLOT(map()));
@@ -271,7 +269,10 @@ void TransactionView::setModel(WalletModel *_model) {
 }
 
 void TransactionView::chooseDate(int idx) {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     QDate current = QDate::currentDate();
     dateRangeWidget->setVisible(false);
     switch (dateWidget->itemData(idx).toInt()) {
@@ -315,30 +316,42 @@ void TransactionView::chooseDate(int idx) {
 }
 
 void TransactionView::chooseType(int idx) {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     transactionProxyModel->setTypeFilter(typeWidget->itemData(idx).toInt());
 }
 
 void TransactionView::chooseWatchonly(int idx) {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     transactionProxyModel->setWatchOnlyFilter(
         (TransactionFilterProxy::WatchOnlyFilter)watchOnlyWidget->itemData(idx)
             .toInt());
 }
 
 void TransactionView::changedPrefix(const QString &prefix) {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     transactionProxyModel->setAddressPrefix(prefix);
 }
 
 void TransactionView::changedAmount(const QString &amount) {
-    if (!transactionProxyModel) return;
-    Amount amount_parsed(0);
+    if (!transactionProxyModel) {
+        return;
+    }
+
+    Amount amount_parsed = Amount::zero();
     if (BitcoinUnits::parse(model->getOptionsModel()->getDisplayUnit(), amount,
                             &amount_parsed)) {
         transactionProxyModel->setMinAmount(amount_parsed);
     } else {
-        transactionProxyModel->setMinAmount(Amount(0));
+        transactionProxyModel->setMinAmount(Amount::zero());
     }
 }
 
@@ -348,15 +361,18 @@ void TransactionView::exportClicked() {
         this, tr("Export Transaction History"), QString(),
         tr("Comma separated file (*.csv)"), nullptr);
 
-    if (filename.isNull()) return;
+    if (filename.isNull()) {
+        return;
+    }
 
     CSVModelWriter writer(filename);
 
     // name, column, role
     writer.setModel(transactionProxyModel);
     writer.addColumn(tr("Confirmed"), 0, TransactionTableModel::ConfirmedRole);
-    if (model && model->haveWatchOnly())
+    if (model && model->haveWatchOnly()) {
         writer.addColumn(tr("Watch-only"), TransactionTableModel::Watchonly);
+    }
     writer.addColumn(tr("Date"), 0, TransactionTableModel::DateRole);
     writer.addColumn(tr("Type"), TransactionTableModel::Type, Qt::EditRole);
     writer.addColumn(tr("Label"), 0, TransactionTableModel::LabelRole);
@@ -385,16 +401,18 @@ void TransactionView::contextualMenu(const QPoint &point) {
     QModelIndex index = transactionView->indexAt(point);
     QModelIndexList selection =
         transactionView->selectionModel()->selectedRows(0);
-    if (selection.empty()) return;
+    if (selection.empty()) {
+        return;
+    }
 
     // check if transaction can be abandoned, disable context menu action in
     // case it doesn't
-    uint256 hash;
-    hash.SetHex(selection.at(0)
+    TxId txid;
+    txid.SetHex(selection.at(0)
                     .data(TransactionTableModel::TxHashRole)
                     .toString()
                     .toStdString());
-    abandonAction->setEnabled(model->transactionCanBeAbandoned(hash));
+    abandonAction->setEnabled(model->transactionCanBeAbandoned(txid));
 
     if (index.isValid()) {
         contextMenu->exec(QCursor::pos());
@@ -402,18 +420,22 @@ void TransactionView::contextualMenu(const QPoint &point) {
 }
 
 void TransactionView::abandonTx() {
-    if (!transactionView || !transactionView->selectionModel()) return;
+    if (!transactionView || !transactionView->selectionModel()) {
+        return;
+    }
+
     QModelIndexList selection =
         transactionView->selectionModel()->selectedRows(0);
 
     // get the hash from the TxHashRole (QVariant / QString)
-    uint256 hash;
     QString hashQStr =
         selection.at(0).data(TransactionTableModel::TxHashRole).toString();
-    hash.SetHex(hashQStr.toStdString());
+
+    TxId txid;
+    txid.SetHex(hashQStr.toStdString());
 
     // Abandon the wallet transaction over the walletModel
-    model->abandonTransaction(hash);
+    model->abandonTransaction(txid);
 
     // Update the table
     model->getTransactionTableModel()->updateTransaction(hashQStr, CT_UPDATED,
@@ -450,12 +472,18 @@ void TransactionView::copyTxPlainText() {
 }
 
 void TransactionView::editLabel() {
-    if (!transactionView->selectionModel() || !model) return;
+    if (!transactionView->selectionModel() || !model) {
+        return;
+    }
+
     QModelIndexList selection =
         transactionView->selectionModel()->selectedRows();
     if (!selection.isEmpty()) {
         AddressTableModel *addressBook = model->getAddressTableModel();
-        if (!addressBook) return;
+        if (!addressBook) {
+            return;
+        }
+
         QString address =
             selection.at(0).data(TransactionTableModel::AddressRole).toString();
         if (address.isEmpty()) {
@@ -463,8 +491,7 @@ void TransactionView::editLabel() {
             return;
         }
         // Is address in address book? Address book can miss address when a
-        // transaction is
-        // sent from outside the UI.
+        // transaction is sent from outside the UI.
         int idx = addressBook->lookupAddress(address);
         if (idx != -1) {
             // Edit sending / receiving address
@@ -491,7 +518,10 @@ void TransactionView::editLabel() {
 }
 
 void TransactionView::showDetails() {
-    if (!transactionView->selectionModel()) return;
+    if (!transactionView->selectionModel()) {
+        return;
+    }
+
     QModelIndexList selection =
         transactionView->selectionModel()->selectedRows();
     if (!selection.isEmpty()) {
@@ -502,15 +532,18 @@ void TransactionView::showDetails() {
 }
 
 void TransactionView::openThirdPartyTxUrl(QString url) {
-    if (!transactionView || !transactionView->selectionModel()) return;
+    if (!transactionView || !transactionView->selectionModel()) {
+        return;
+    }
+
     QModelIndexList selection =
         transactionView->selectionModel()->selectedRows(0);
-    if (!selection.isEmpty())
+    if (!selection.isEmpty()) {
         QDesktopServices::openUrl(QUrl::fromUserInput(
-            url.replace("%s",
-                        selection.at(0)
-                            .data(TransactionTableModel::TxHashRole)
-                            .toString())));
+            url.replace("%s", selection.at(0)
+                                  .data(TransactionTableModel::TxHashRole)
+                                  .toString())));
+    }
 }
 
 QWidget *TransactionView::createDateRangeWidget() {
@@ -550,17 +583,53 @@ QWidget *TransactionView::createDateRangeWidget() {
 }
 
 void TransactionView::dateRangeChanged() {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     transactionProxyModel->setDateRange(QDateTime(dateFrom->date()),
                                         QDateTime(dateTo->date()).addDays(1));
 }
 
 void TransactionView::focusTransaction(const QModelIndex &idx) {
-    if (!transactionProxyModel) return;
+    if (!transactionProxyModel) {
+        return;
+    }
+
     QModelIndex targetIdx = transactionProxyModel->mapFromSource(idx);
     transactionView->scrollTo(targetIdx);
     transactionView->setCurrentIndex(targetIdx);
     transactionView->setFocus();
+}
+
+void TransactionView::focusTransaction(const uint256 &txid) {
+    if (!transactionProxyModel) {
+        return;
+    }
+
+    const QModelIndexList results =
+        this->model->getTransactionTableModel()->match(
+            this->model->getTransactionTableModel()->index(0, 0),
+            TransactionTableModel::TxHashRole,
+            QString::fromStdString(txid.ToString()), -1);
+
+    transactionView->setFocus();
+    transactionView->selectionModel()->clearSelection();
+    for (const QModelIndex &index : results) {
+        const QModelIndex targetIndex =
+            transactionProxyModel->mapFromSource(index);
+        transactionView->selectionModel()->select(
+            targetIndex,
+            QItemSelectionModel::Rows | QItemSelectionModel::Select);
+        // Called once per destination to ensure all results are in view, unless
+        // transactions are not ordered by (ascending or descending) date.
+        transactionView->scrollTo(targetIndex);
+        // scrollTo() does not scroll far enough the first time when
+        // transactions are ordered by ascending date.
+        if (index == results[0]) {
+            transactionView->scrollTo(targetIndex);
+        }
+    }
 }
 
 // We override the virtual resizeEvent of the QWidget to adjust tables column

@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.5)
 project(Leveldb VERSION 0.1.0 LANGUAGES C CXX)
 
 # This project can take advantage of C++11.
@@ -13,29 +13,12 @@ add_compiler_flag(-Wno-sign-compare -Wno-implicit-fallthrough)
 add_c_compiler_flag(-Wno-strict-prototypes)
 remove_compiler_flags(-Wstrict-prototypes)
 
-include(TestBigEndian)
-test_big_endian(LEVELDB_IS_BIG_ENDIAN)
-
-include(CheckIncludeFile)
-check_include_file("unistd.h" HAVE_UNISTD_H)
-
 include(CheckIncludeFileCXX)
 check_include_file_cxx("atomic" LEVELDB_ATOMIC_PRESENT)
 
-include(CheckLibraryExists)
-check_library_exists(crc32c crc32c_value "" HAVE_CRC32C)
-check_library_exists(snappy snappy_compress "" HAVE_SNAPPY)
-
-include(CheckSymbolExists)
-check_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
-
-configure_file(
-  port/port_config.h.cmake.in
-  include/port/port_config.h
-)
-
 include_directories(.)
 
+# Leveldb library
 add_library(leveldb
 	db/builder.cc
 	db/c.cc
@@ -75,17 +58,14 @@ add_library(leveldb
 	util/logging.cc
 	util/options.cc
 	util/status.cc
-
-	# Always include that guy even when not using SSE or posix.
-	# TODO: proper support of SSE.
-	port/port_posix_sse.cc
 )
 
-target_include_directories(leveldb
-	PUBLIC
-		include
-		"${PROJECT_BINARY_DIR}/include"
-)
+# The SSE4.2 optimized CRC32 implementation.
+add_library(leveldb-sse4.2 port/port_posix_sse.cc)
+target_link_libraries(leveldb leveldb-sse4.2)
+
+# The libmemenv library.
+add_library(memenv helpers/memenv/memenv.cc)
 
 # Select the proper port: posix or Windows.
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -107,17 +87,11 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	target_include_directories(leveldb PUBLIC ${SHLWAPI_INCLUDE_DIR})
 else()
 	set(LEVELDB_PLATFORM POSIX)
-	target_sources(leveldb
-		PRIVATE
-			port/port_posix.cc
-	)
+	target_sources(leveldb PRIVATE port/port_posix.cc)
 
 	set(THREADS_PREFER_PTHREAD_FLAG ON)
 	find_package(Threads REQUIRED)
 	target_link_libraries(leveldb Threads::Threads)
-
-	# TODO: If the plateform supports SSE4.2 activate
-	# LEVELDB_PLATFORM_POSIX_SSE and the proper compiler flags.
 
 	if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 		set(LEVELDB_OS LINUX)
@@ -142,15 +116,10 @@ else()
 		# No idea what's the proper system name is here.
 		set(LEVELDB_OS IOS)
 	else()
+		# Unknown plateform, assume linux.
 		set(LEVELDB_OS LINUX)
 	endif()
 endif()
-
-target_compile_definitions(leveldb
-	PUBLIC
-		OS_${LEVELDB_OS}
-		LEVELDB_PLATFORM_${LEVELDB_PLATFORM}
-)
 
 # Right now this is not used but the latest version of leveldb uses this
 # so we might as well be ready for it.
@@ -161,20 +130,52 @@ if (HAVE_SNAPPY)
   target_link_libraries(leveldb snappy)
 endif (HAVE_SNAPPY)
 
-# The libmemenv library.
-add_library(memenv helpers/memenv/memenv.cc)
-target_include_directories(memenv PUBLIC include)
-target_compile_definitions(memenv
-	PUBLIC
-		OS_${LEVELDB_OS}
-		LEVELDB_PLATFORM_${LEVELDB_PLATFORM}
-)
+# Configure all leveldb libraries.
+function(configure_leveldb_lib LIB)
+	target_include_directories(${LIB} PUBLIC include)
+	target_compile_definitions(${LIB}
+		PUBLIC
+			OS_${LEVELDB_OS}
+			LEVELDB_PLATFORM_${LEVELDB_PLATFORM}
+	)
+	if(LEVELDB_ATOMIC_PRESENT)
+		target_compile_definitions(${LIB} PUBLIC LEVELDB_ATOMIC_PRESENT)
+	endif(LEVELDB_ATOMIC_PRESENT)
+endfunction()
+
+configure_leveldb_lib(leveldb)
+configure_leveldb_lib(leveldb-sse4.2)
+configure_leveldb_lib(memenv)
+
+# Check support for SSE4.2 and act accordingly.
+set(CMAKE_REQUIRED_FLAGS -msse4.2)
+check_c_source_compiles("
+	#include <stdint.h>
+	#if defined(_MSC_VER)
+	#include <intrin.h>
+	#elif defined(__GNUC__) && defined(__SSE4_2__)
+	#include <nmmintrin.h>
+	#endif
+	int main() {
+		uint64_t l = 0;
+		l = _mm_crc32_u8(l, 0);
+		l = _mm_crc32_u32(l, 0);
+		l = _mm_crc32_u64(l, 0);
+		return l;
+	}
+" ENABLE_HWCRC32)
+if(ENABLE_HWCRC32)
+	target_compile_definitions(leveldb-sse4.2 PRIVATE LEVELDB_PLATFORM_POSIX_SSE)
+	target_compile_options(leveldb-sse4.2 PRIVATE -msse4.2)
+endif()
 
 option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
 if(LEVELDB_BUILD_TESTS)
-	enable_testing()
+	include(TestSuite)
+	create_test_suite(leveldb)
 
 	add_library(leveldb_test_base
+		EXCLUDE_FROM_ALL
 		util/testharness.cc
 		util/testutil.cc
 	)
@@ -182,9 +183,8 @@ if(LEVELDB_BUILD_TESTS)
 	target_link_libraries(leveldb_test_base leveldb)
 
 	function(create_leveldb_test NAME FILES)
-		add_executable(${NAME} ${FILES})
+		add_test_to_suite(leveldb ${NAME} EXCLUDE_FROM_ALL ${FILES})
 		target_link_libraries(${NAME} leveldb_test_base)
-		add_test(NAME ${NAME} COMMAND ${NAME})
 	endfunction()
 
 	create_leveldb_test(autocompact_test db/autocompact_test.cc)

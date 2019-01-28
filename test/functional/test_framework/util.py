@@ -25,14 +25,20 @@ logger = logging.getLogger("TestFramework.utils")
 ##################
 
 
-def assert_fee_amount(fee, tx_size, fee_per_kB):
-    """Assert the fee was in range"""
+def assert_fee_amount(fee, tx_size, fee_per_kB, wiggleroom=2):
+    """
+    Assert the fee was in range
+
+    wiggleroom defines an amount that the test expects the wallet to be off by
+    when estimating fees.  This can be due to the dummy signature that is added
+    during fee calculation, or due to the wallet funding transactions using the
+    ceiling of the calculated fee.
+    """
     target_fee = tx_size * fee_per_kB / 1000
-    if fee < target_fee:
+    if fee < (tx_size - wiggleroom) * fee_per_kB / 1000:
         raise AssertionError(
             "Fee of %s BTC too low! (Should be %s BTC)" % (str(fee), str(target_fee)))
-    # allow the wallet's estimation to be at most 2 bytes off
-    if fee > (tx_size + 2) * fee_per_kB / 1000:
+    if fee > (tx_size + wiggleroom) * fee_per_kB / 1000:
         raise AssertionError(
             "Fee of %s BTC too high! (Should be %s BTC)" % (str(fee), str(target_fee)))
 
@@ -162,12 +168,12 @@ def assert_is_hash_string(string, length=64):
 
 def assert_array_result(object_array, to_match, expected, should_not_find=False):
     """
-        Pass in array of JSON objects, a dictionary with key/value pairs
-        to match against, and another dictionary with expected key/value
-        pairs.
-        If the should_not_find flag is true, to_match should not be found
-        in object_array
-        """
+    Pass in array of JSON objects, a dictionary with key/value pairs
+    to match against, and another dictionary with expected key/value
+    pairs.
+    If the should_not_find flag is true, to_match should not be found
+    in object_array
+    """
     if should_not_find:
         assert_equal(expected, {})
     num_matched = 0
@@ -304,16 +310,10 @@ def rpc_port(n):
     return PORT_MIN + PORT_RANGE + n + (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 
-def rpc_url(datadir, i, rpchost=None):
+def rpc_url(datadir, host, port):
     rpc_u, rpc_p = get_auth_cookie(datadir)
-    host = '127.0.0.1'
-    port = rpc_port(i)
-    if rpchost:
-        parts = rpchost.split(':')
-        if len(parts) == 2:
-            host, port = parts
-        else:
-            host = rpchost
+    if host == None:
+        host = '127.0.0.1'
     return "http://%s:%s@%s:%d" % (rpc_u, rpc_p, host, int(port))
 
 # Node functions
@@ -374,30 +374,33 @@ def set_node_times(nodes, t):
         node.setmocktime(t)
 
 
-def disconnect_nodes(from_connection, node_num):
-    for peer_id in [peer['id'] for peer in from_connection.getpeerinfo() if "testnode%d" % node_num in peer['subver']]:
-        from_connection.disconnectnode(nodeid=peer_id)
+def disconnect_nodes(from_node, to_node):
+    for peer_id in [peer['id'] for peer in from_node.getpeerinfo() if to_node.name in peer['subver']]:
+        from_node.disconnectnode(nodeid=peer_id)
 
     for _ in range(50):
-        if [peer['id'] for peer in from_connection.getpeerinfo() if "testnode%d" % node_num in peer['subver']] == []:
+        if [peer['id'] for peer in from_node.getpeerinfo() if to_node.name in peer['subver']] == []:
             break
         time.sleep(0.1)
     else:
         raise AssertionError("timed out waiting for disconnect")
 
 
-def connect_nodes(from_connection, node_num):
-    ip_port = "127.0.0.1:" + str(p2p_port(node_num))
-    from_connection.addnode(ip_port, "onetry")
+def connect_nodes(from_node, to_node):
+    host = to_node.host
+    if host == None:
+        host = '127.0.0.1'
+    ip_port = host + ':' + str(to_node.p2p_port)
+    from_node.addnode(ip_port, "onetry")
     # poll until version handshake complete to avoid race conditions
     # with transaction relaying
-    while any(peer['version'] == 0 for peer in from_connection.getpeerinfo()):
+    while any(peer['version'] == 0 for peer in from_node.getpeerinfo()):
         time.sleep(0.1)
 
 
-def connect_nodes_bi(nodes, a, b):
-    connect_nodes(nodes[a], b)
-    connect_nodes(nodes[b], a)
+def connect_nodes_bi(a, b):
+    connect_nodes(a, b)
+    connect_nodes(b, a)
 
 
 def sync_blocks(rpc_connections, *, wait=1, timeout=60):
@@ -575,40 +578,6 @@ def random_transaction(nodes, amount, min_fee, fee_increment, fee_variants):
 
     return (txid, signresult["hex"], fee)
 
-# Helper to create at least "count" utxos
-# Pass in a fee that is sufficient for relay and mining new transactions.
-
-
-def create_confirmed_utxos(fee, node, count, age=101):
-    to_generate = int(0.5 * count) + age
-    while to_generate > 0:
-        node.generate(min(25, to_generate))
-        to_generate -= 25
-    utxos = node.listunspent()
-    iterations = count - len(utxos)
-    addr1 = node.getnewaddress()
-    addr2 = node.getnewaddress()
-    if iterations <= 0:
-        return utxos
-    for i in range(iterations):
-        t = utxos.pop()
-        inputs = []
-        inputs.append({"txid": t["txid"], "vout": t["vout"]})
-        outputs = {}
-        send_value = t['amount'] - fee
-        outputs[addr1] = satoshi_round(send_value / 2)
-        outputs[addr2] = satoshi_round(send_value / 2)
-        raw_tx = node.createrawtransaction(inputs, outputs)
-        signed_tx = node.signrawtransaction(raw_tx)["hex"]
-        node.sendrawtransaction(signed_tx)
-
-    while (node.getmempoolinfo()['size'] > 0):
-        node.generate(1)
-
-    utxos = node.listunspent()
-    assert(len(utxos) >= count)
-    return utxos
-
 # Create large OP_RETURN txouts that can be appended to a transaction
 # to make it large (helper for constructing large transactions).
 
@@ -662,62 +631,3 @@ def create_lots_of_big_transactions(node, txouts, utxos, num, fee):
         txid = node.sendrawtransaction(signresult["hex"], True)
         txids.append(txid)
     return txids
-
-
-def mine_large_block(node, utxos=None):
-    # generate a 66k transaction,
-    # and 14 of them is close to the 1MB block limit
-    num = 14
-    txouts = gen_return_txouts()
-    utxos = utxos if utxos is not None else []
-    if len(utxos) < num:
-        utxos.clear()
-        utxos.extend(node.listunspent())
-    fee = 100 * node.getnetworkinfo()["relayfee"]
-    create_lots_of_big_transactions(node, txouts, utxos, num, fee=fee)
-    node.generate(1)
-
-
-def get_srcdir(calling_script=None):
-    """
-    Try to find out the base folder containing the 'src' folder.
-    If SRCDIR is set it does a sanity check and returns that.
-    Otherwise it goes on a search and rescue mission.
-
-    Returns None if it cannot find a suitable folder.
-
-    TODO: This is only used for cdefs, consider moving that there.
-    """
-    def contains_src(path_to_check):
-        if not path_to_check:
-            return False
-        else:
-            cand_path = os.path.join(path_to_check, 'src')
-            return os.path.exists(cand_path) and os.path.isdir(cand_path)
-
-    srcdir = os.environ.get('SRCDIR', '')
-    if contains_src(srcdir):
-        return srcdir
-
-    # If we have a caller, try to guess from its location where the
-    # top level might be.
-    if calling_script:
-        caller_basedir = os.path.dirname(
-            os.path.dirname(os.path.dirname(calling_script)))
-        if caller_basedir != '' and contains_src(os.path.abspath(caller_basedir)):
-            return os.path.abspath(caller_basedir)
-
-    # Try to work it based out on main module
-    # We might expect the caller to be rpc-tests.py or a test script
-    # itself.
-    import sys
-    mainmod = sys.modules['__main__']
-    mainmod_path = getattr(mainmod, '__file__', '')
-    if mainmod_path and mainmod_path.endswith('.py'):
-        maybe_top = os.path.dirname(
-            os.path.dirname(os.path.dirname(mainmod_path)))
-        if contains_src(os.path.abspath(maybe_top)):
-            return os.path.abspath(maybe_top)
-
-    # No luck, give up.
-    return None

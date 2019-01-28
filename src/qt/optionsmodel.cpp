@@ -325,7 +325,12 @@ bool OptionsModel::setData(const QModelIndex &index, const QVariant &value,
                 break;
             case MapPortUPnP: // core option - can be changed on-the-fly
                 settings.setValue("fUseUPnP", value.toBool());
-                MapPort(value.toBool());
+                if (value.toBool()) {
+                    StartMapPort();
+                } else {
+                    InterruptMapPort();
+                    StopMapPort();
+                }
                 break;
             case MinimizeOnClose:
                 fMinimizeOnClose = value.toBool();
@@ -502,7 +507,7 @@ void OptionsModel::setRestartRequired(bool fRequired) {
     return settings.setValue("fRestartRequired", fRequired);
 }
 
-bool OptionsModel::isRestartRequired() {
+bool OptionsModel::isRestartRequired() const {
     QSettings settings;
     return settings.value("fRestartRequired", false).toBool();
 }

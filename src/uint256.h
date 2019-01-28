@@ -27,15 +27,29 @@ public:
     explicit base_blob(const std::vector<uint8_t> &vch);
 
     bool IsNull() const {
-        for (int i = 0; i < WIDTH; i++)
-            if (data[i] != 0) return false;
+        for (int i = 0; i < WIDTH; i++) {
+            if (data[i] != 0) {
+                return false;
+            }
+        }
         return true;
     }
 
     void SetNull() { memset(data, 0, sizeof(data)); }
 
     inline int Compare(const base_blob &other) const {
-        return memcmp(data, other.data, sizeof(data));
+        for (size_t i = 0; i < sizeof(data); i++) {
+            uint8_t a = data[sizeof(data) - 1 - i];
+            uint8_t b = other.data[sizeof(data) - 1 - i];
+            if (a > b) {
+                return 1;
+            }
+            if (a < b) {
+                return -1;
+            }
+        }
+
+        return 0;
     }
 
     friend inline bool operator==(const base_blob &a, const base_blob &b) {
@@ -47,11 +61,20 @@ public:
     friend inline bool operator<(const base_blob &a, const base_blob &b) {
         return a.Compare(b) < 0;
     }
+    friend inline bool operator<=(const base_blob &a, const base_blob &b) {
+        return a.Compare(b) <= 0;
+    }
+    friend inline bool operator>(const base_blob &a, const base_blob &b) {
+        return a.Compare(b) > 0;
+    }
+    friend inline bool operator>=(const base_blob &a, const base_blob &b) {
+        return a.Compare(b) >= 0;
+    }
 
     std::string GetHex() const;
     void SetHex(const char *psz);
     void SetHex(const std::string &str);
-    std::string ToString() const;
+    std::string ToString() const { return GetHex(); }
 
     uint8_t *begin() { return &data[0]; }
 
@@ -65,10 +88,10 @@ public:
 
     uint64_t GetUint64(int pos) const {
         const uint8_t *ptr = data + pos * 8;
-        return ((uint64_t)ptr[0]) | ((uint64_t)ptr[1]) << 8 |
-               ((uint64_t)ptr[2]) << 16 | ((uint64_t)ptr[3]) << 24 |
-               ((uint64_t)ptr[4]) << 32 | ((uint64_t)ptr[5]) << 40 |
-               ((uint64_t)ptr[6]) << 48 | ((uint64_t)ptr[7]) << 56;
+        return uint64_t(ptr[0]) | (uint64_t(ptr[1]) << 8) |
+               (uint64_t(ptr[2]) << 16) | (uint64_t(ptr[3]) << 24) |
+               (uint64_t(ptr[4]) << 32) | (uint64_t(ptr[5]) << 40) |
+               (uint64_t(ptr[6]) << 48) | (uint64_t(ptr[7]) << 56);
     }
 
     template <typename Stream> void Serialize(Stream &s) const {
@@ -88,7 +111,7 @@ public:
 class uint160 : public base_blob<160> {
 public:
     uint160() {}
-    uint160(const base_blob<160> &b) : base_blob<160>(b) {}
+    explicit uint160(const base_blob<160> &b) : base_blob<160>(b) {}
     explicit uint160(const std::vector<uint8_t> &vch) : base_blob<160>(vch) {}
 };
 
@@ -101,7 +124,7 @@ public:
 class uint256 : public base_blob<256> {
 public:
     uint256() {}
-    uint256(const base_blob<256> &b) : base_blob<256>(b) {}
+    explicit uint256(const base_blob<256> &b) : base_blob<256>(b) {}
     explicit uint256(const std::vector<uint8_t> &vch) : base_blob<256>(vch) {}
 
     /**

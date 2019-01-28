@@ -10,7 +10,6 @@
 #include "coins.h"
 #include "compressor.h"
 #include "consensus/consensus.h"
-#include "primitives/transaction.h"
 #include "serialize.h"
 
 class CBlock;
@@ -30,7 +29,7 @@ class TxInUndoSerializer {
     const Coin *pcoin;
 
 public:
-    TxInUndoSerializer(const Coin *pcoinIn) : pcoin(pcoinIn) {}
+    explicit TxInUndoSerializer(const Coin *pcoinIn) : pcoin(pcoinIn) {}
 
     template <typename Stream> void Serialize(Stream &s) const {
         ::Serialize(
@@ -47,7 +46,7 @@ class TxInUndoDeserializer {
     Coin *pcoin;
 
 public:
-    TxInUndoDeserializer(Coin *pcoinIn) : pcoin(pcoinIn) {}
+    explicit TxInUndoDeserializer(Coin *pcoinIn) : pcoin(pcoinIn) {}
 
     template <typename Stream> void Unserialize(Stream &s) {
         uint32_t nCode = 0;

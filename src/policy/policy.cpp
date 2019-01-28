@@ -8,6 +8,7 @@
 
 #include "policy/policy.h"
 
+#include "script/interpreter.h"
 #include "tinyformat.h"
 #include "util.h"
 #include "utilstrencodings.h"
@@ -27,8 +28,7 @@
  * expensive-to-check-upon-redemption script like:
  *   DUP CHECKSIG DROP ... repeated 100 times... OP_1
  */
-bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType,
-                bool allowLargeOpReturn) {
+bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType) {
     std::vector<std::vector<uint8_t>> vSolutions;
     if (!Solver(scriptPubKey, whichType, vSolutions)) {
         return false;
@@ -46,9 +46,7 @@ bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType,
         }
 
         unsigned nMaxDatacarrierBytes =
-            gArgs.GetArg("-datacarriersize",
-                         allowLargeOpReturn ? MAX_OP_RETURN_RELAY_LARGE
-                                            : MAX_OP_RETURN_RELAY);
+            gArgs.GetArg("-datacarriersize", MAX_OP_RETURN_RELAY);
         if (scriptPubKey.size() > nMaxDatacarrierBytes) {
             return false;
         }
@@ -57,8 +55,7 @@ bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType,
     return whichType != TX_NONSTANDARD;
 }
 
-bool IsStandardTx(const CTransaction &tx, std::string &reason,
-                  bool allowLargeOpReturn) {
+bool IsStandardTx(const CTransaction &tx, std::string &reason) {
     if (tx.nVersion > CTransaction::MAX_STANDARD_VERSION || tx.nVersion < 1) {
         reason = "version";
         return false;
@@ -68,20 +65,14 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason,
     // almost as much to process as they cost the sender in fees, because
     // computing signature hashes is O(ninputs*txsize). Limiting transactions
     // to MAX_STANDARD_TX_SIZE mitigates CPU exhaustion attacks.
-    unsigned int sz = tx.GetTotalSize();
+    uint32_t sz = tx.GetTotalSize();
     if (sz >= MAX_STANDARD_TX_SIZE) {
         reason = "tx-size";
         return false;
     }
 
     for (const CTxIn &txin : tx.vin) {
-        // Biggest 'standard' txin is a 15-of-15 P2SH multisig with compressed
-        // keys (remember the 520 byte limit on redeemScript size). That works
-        // out to a (15*(33+1))+3=513 byte redeemScript, 513+1+15*(73+1)+3=1627
-        // bytes of scriptSig, which we round off to 1650 bytes for some minor
-        // future-proofing. That's also enough to spend a 20-of-20 CHECKMULTISIG
-        // scriptPubKey, though such a scriptPubKey is not considered standard.
-        if (txin.scriptSig.size() > 1650) {
+        if (txin.scriptSig.size() > MAX_TX_IN_SCRIPT_SIG_SIZE) {
             reason = "scriptsig-size";
             return false;
         }
@@ -94,7 +85,7 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason,
     unsigned int nDataOut = 0;
     txnouttype whichType;
     for (const CTxOut &txout : tx.vout) {
-        if (!::IsStandard(txout.scriptPubKey, whichType, allowLargeOpReturn)) {
+        if (!::IsStandard(txout.scriptPubKey, whichType)) {
             reason = "scriptpubkey";
             return false;
         }
@@ -126,8 +117,8 @@ bool AreInputsStandard(const CTransaction &tx,
         return true;
     }
 
-    for (size_t i = 0; i < tx.vin.size(); i++) {
-        const CTxOut &prev = mapInputs.GetOutputFor(tx.vin[i]);
+    for (const CTxIn &in : tx.vin) {
+        const CTxOut &prev = mapInputs.GetOutputFor(in);
 
         std::vector<std::vector<uint8_t>> vSolutions;
         txnouttype whichType;
@@ -141,7 +132,7 @@ bool AreInputsStandard(const CTransaction &tx,
             std::vector<std::vector<uint8_t>> stack;
             // convert the scriptSig into a stack, so we can inspect the
             // redeemScript
-            if (!EvalScript(stack, tx.vin[i].scriptSig, SCRIPT_VERIFY_NONE,
+            if (!EvalScript(stack, in.scriptSig, SCRIPT_VERIFY_NONE,
                             BaseSignatureChecker())) {
                 return false;
             }
@@ -150,7 +141,8 @@ bool AreInputsStandard(const CTransaction &tx,
             }
 
             CScript subscript(stack.back().begin(), stack.back().end());
-            if (subscript.GetSigOpCount(true) > MAX_P2SH_SIGOPS) {
+            if (subscript.GetSigOpCount(STANDARD_CHECKDATASIG_VERIFY_FLAGS,
+                                        true) > MAX_P2SH_SIGOPS) {
                 return false;
             }
         }
@@ -159,6 +151,5 @@ bool AreInputsStandard(const CTransaction &tx,
     return true;
 }
 
-CFeeRate incrementalRelayFee = CFeeRate(DEFAULT_INCREMENTAL_RELAY_FEE);
 CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
-unsigned int nBytesPerSigOp = DEFAULT_BYTES_PER_SIGOP;
+uint32_t nBytesPerSigOp = DEFAULT_BYTES_PER_SIGOP;

@@ -17,9 +17,13 @@ the usage of the absolute path.
 To Build
 ---------------------
 
+It is recommended to create a build directory to build out-of-tree.
+
 ```bash
 ./autogen.sh
-./configure
+mkdir build
+cd build
+../configure
 make
 make install # optional
 ```
@@ -42,7 +46,7 @@ Optional dependencies:
  Library     | Purpose          | Description
  ------------|------------------|----------------------
  miniupnpc   | UPnP Support     | Firewall-jumping support
- libdb4.8    | Berkeley DB      | Wallet storage (only needed when wallet enabled)
+ libdb       | Berkeley DB      | Wallet storage (only needed when wallet enabled)
  qt          | GUI              | GUI toolkit (only needed when GUI enabled)
  protobuf    | Payments in GUI  | Data interchange format used for payment protocol (only needed when GUI enabled)
  libqrencode | QR codes in GUI  | Optional for generating QR codes (only needed when GUI enabled)
@@ -79,22 +83,9 @@ install necessary parts of boost:
 
         sudo apt-get install libboost-all-dev
 
-BerkeleyDB is required for the wallet.
+BerkeleyDB 5.3 or later is required for the wallet. This can be installed with:
 
-**For Ubuntu only:** db4.8 packages are available [here](https://launchpad.net/~bitcoin/+archive/bitcoin).
-You can add the repository and install using the following commands:
-
-    sudo apt-get install software-properties-common
-    sudo add-apt-repository ppa:bitcoin/bitcoin
-    sudo apt-get update
-    sudo apt-get install libdb4.8-dev libdb4.8++-dev
-
-For Debian, BerkeleyDB 4.8 can be installed by following the instructions in the “Berkeley DB” section below.
-
-Ubuntu and Debian have their own libdb-dev and libdb++-dev packages, but these will install
-BerkeleyDB 5.1 or later, which break binary wallet compatibility with the distributed executables which
-are based on BerkeleyDB 4.8. If you do not care about wallet compatibility,
-pass `--with-incompatible-bdb` to configure.
+        sudo apt-get install libdb-dev libdb++-dev
 
 See the section "Disable-wallet mode" to build Bitcoin ABC without wallet.
 
@@ -110,17 +101,12 @@ Dependencies for the GUI: Ubuntu & Debian
 -----------------------------------------
 
 If you want to build Bitcoin-Qt, make sure that the required packages for Qt development
-are installed. Either Qt 5 or Qt 4 are necessary to build the GUI.
-If both Qt 4 and Qt 5 are installed, Qt 5 will be used. Pass `--with-gui=qt4` to configure to choose Qt4.
+are installed. Qt 5 is necessary to build the GUI.
 To build without GUI pass `--without-gui`.
 
-To build with Qt 5 (recommended) you need the following:
+To build with Qt 5 you need the following:
 
     sudo apt-get install libqt5gui5 libqt5core5a libqt5dbus5 qttools5-dev qttools5-dev-tools libprotobuf-dev protobuf-compiler
-
-Alternatively, to build with Qt 4 you need the following:
-
-    sudo apt-get install libqt4-dev libprotobuf-dev protobuf-compiler
 
 libqrencode (optional) can be installed with:
 
@@ -133,13 +119,13 @@ Dependency Build Instructions: Fedora
 -------------------------------------
 Build requirements:
 
-    sudo dnf install gcc-c++ libtool make autoconf automake openssl-devel libevent-devel boost-devel libdb4-devel libdb4-cxx-devel
+    sudo dnf install gcc-c++ libtool make autoconf automake openssl-devel libevent-devel boost-devel libdb-devel libdb-cxx-devel
 
 Optional:
 
     sudo dnf install miniupnpc-devel
 
-To build with Qt 5 (recommended) you need the following:
+To build with Qt 5 you need the following:
 
     sudo dnf install qt5-qttools-devel qt5-qtbase-devel protobuf-devel
 
@@ -163,40 +149,6 @@ turned off by default.  See the configure options for upnp behavior desired:
 	--without-miniupnpc      No UPnP support miniupnp not required
 	--disable-upnp-default   (the default) UPnP support turned off by default at runtime
 	--enable-upnp-default    UPnP support turned on by default at runtime
-
-
-Berkeley DB
------------
-It is recommended to use Berkeley DB 4.8. If you have to build it yourself:
-
-```bash
-BITCOIN_ROOT=$(pwd)
-
-# Pick some path to install BDB to, here we install in /usr/local/db4
-BDB_PREFIX="/usr/local/db4"
-sudo mkdir -p $BDB_PREFIX
-
-cd $BDB_PREFIX/..
-
-# Fetch the source and verify that it is not tampered with
-sudo wget 'http://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz'
-echo '12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef  db-4.8.30.NC.tar.gz' | sha256sum -c
-# -> db-4.8.30.NC.tar.gz: OK
-sudo tar -xzvf db-4.8.30.NC.tar.gz
-
-# Build the library and install to our prefix
-cd db-4.8.30.NC/build_unix/
-#  Note: Do a static build so that it can be embedded into the executable, instead of having to find a .so at runtime
-sudo ../dist/configure --enable-cxx --disable-shared --with-pic --prefix=$BDB_PREFIX
-sudo make install
-
-# Configure Bitcoin ABC to use our own-built instance of BDB
-cd $BITCOIN_ROOT
-./autogen.sh
-./configure LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/" # (other args...)
-```
-
-**Note**: You only need Berkeley DB if the wallet is enabled (see the section *Disable-Wallet mode* below).
 
 Boost
 -----
@@ -258,8 +210,6 @@ disable-wallet mode with:
 
     ./configure --disable-wallet
 
-In this case there is no dependency on Berkeley DB 4.8.
-
 Mining is also possible in disable-wallet mode, but only using the `getblocktemplate` RPC
 call not `getwork`.
 
@@ -275,18 +225,11 @@ Setup and Build Example: Arch Linux
 This example lists the steps necessary to setup and build a command line only, non-wallet distribution of the latest changes on Arch Linux:
 
     pacman -S git base-devel boost libevent python
-    git clone https://github.com/Bitcoin-ABC/bitcoin-abc
+    git clone https://github.com/Bitcoin-ABC/bitcoin-abc.git
     cd bitcoin-abc/
     ./autogen.sh
     ./configure --disable-wallet --without-gui --without-miniupnpc
     make check
-
-Note:
-Enabling wallet support requires either compiling against a Berkeley DB newer than 4.8 (package `db`) using `--with-incompatible-bdb`,
-or building and depending on a local version of Berkeley DB 4.8. The readily available Arch Linux packages are currently built using
-`--with-incompatible-bdb` according to the [PKGBUILD](https://projects.archlinux.org/svntogit/community.git/tree/bitcoin/trunk/PKGBUILD).
-As mentioned above, when maintaining portability of the wallet between the standard Bitcoin Core distributions and independently built
-node software is desired, Berkeley DB 4.8 must be used.
 
 
 ARM Cross-compilation

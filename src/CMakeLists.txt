@@ -1,6 +1,13 @@
 # Copyright (c) 2017 The Bitcoin developers
 
+cmake_minimum_required(VERSION 3.5)
+project(BitcoinABC)
+
 set(CMAKE_CXX_STANDARD 11)
+
+# Default visibility is hidden on all targets.
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 option(BUILD_BITCOIN_WALLET "Activate the wallet functionality" ON)
 option(BUILD_BITCOIN_ZMQ "Activate the ZeroMQ functionalities" ON)
@@ -25,15 +32,24 @@ add_compiler_flag(
 	-Wvla
 	-Wformat-security
 	-Wcast-align
+	-Wunused-parameter
+	-Wmissing-braces
+	# FIXME: Activating this flag cause cmake to fail on leveldb.
+	# -Wthread-safety-analysis
+	-Wshadow
 )
 
 option(EXTRA_WARNINGS "Enable extra warnings" OFF)
 if(EXTRA_WARNINGS)
-	add_compiler_flag(-Wshadow)
 	add_cxx_compiler_flag(-Wsuggest-override)
 else()
 	add_compiler_flag(-Wno-unused-parameter)
 endif()
+
+# Create a target for OpenSSL
+include(BrewHelper)
+find_brew_prefix(OPENSSL_ROOT_DIR openssl)
+find_package(OpenSSL REQUIRED)
 
 # libtool style configure
 add_subdirectory(config)
@@ -58,7 +74,9 @@ add_library(util
 	compat/glibcxx_sanity.cpp
 	compat/strnlen.cpp
 	fs.cpp
+	logging.cpp
 	random.cpp
+	rcu.cpp
 	rpc/protocol.cpp
 	support/cleanse.cpp
 	support/lockedpool.cpp
@@ -79,12 +97,10 @@ target_include_directories(util
 		${CMAKE_CURRENT_BINARY_DIR}
 )
 
-# Dependencies
-set(BOOST_PACKAGES_REQUIRED chrono filesystem program_options)
-
+# Target specific configs
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	set(Boost_USE_STATIC_LIBS ON)
-	list(APPEND BOOST_PACKAGES_REQUIRED thread_win32)
+	set(Boost_THREADAPI win32)
 
 	find_package(SHLWAPI REQUIRED)
 	target_link_libraries(util ${SHLWAPI_LIBRARY})
@@ -92,22 +108,28 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
 	find_library(WS2_32_LIBRARY NAMES ws2_32)
 	target_link_libraries(util ${WS2_32_LIBRARY})
-else()
-	list(APPEND BOOST_PACKAGES_REQUIRED date_time thread)
+	
+	target_compile_definitions(util PUBLIC BOOST_THREAD_USE_LIB)
 endif()
 
+# Boost packages
+set(BOOST_PACKAGES_REQUIRED chrono filesystem program_options thread)
+
 function(prepend var prefix)
-   set(listVar "")
-   foreach(f ${ARGN})
-      list(APPEND listVar "${prefix}${f}")
-   endforeach(f)
-   set(${var} "${listVar}" PARENT_SCOPE)
+	set(listVar "")
+	foreach(f ${ARGN})
+		list(APPEND listVar "${prefix}${f}")
+	endforeach(f)
+	set(${var} "${listVar}" PARENT_SCOPE)
 endfunction(prepend)
 
 prepend(BOOST_LIBRARIES "Boost::" ${BOOST_PACKAGES_REQUIRED})
 
 find_package(Boost 1.58 REQUIRED ${BOOST_PACKAGES_REQUIRED})
 target_link_libraries(util univalue crypto ${BOOST_LIBRARIES})
+
+# Make sure boost uses std::atomic (it doesn't before 1.63)
+target_compile_definitions(util PUBLIC BOOST_SP_USE_STD_ATOMIC BOOST_AC_USE_STD_ATOMIC)
 
 # More completely unrelated features shared by all executables.
 # Because nothing says this is different from util than "common"
@@ -122,6 +144,7 @@ add_library(common
 	coins.cpp
 	compressor.cpp
 	dstencode.cpp
+	feerate.cpp
 	globals.cpp
 	core_read.cpp
 	core_write.cpp
@@ -149,6 +172,7 @@ add_library(bitcoinconsensus
 	script/interpreter.cpp
 	script/script.cpp
 	script/script_error.cpp
+	script/sigencoding.cpp
 	uint256.cpp
 	utilstrencodings.cpp
 )
@@ -159,11 +183,14 @@ target_link_libraries(bitcoinconsensus common)
 add_library(server
 	addrman.cpp
 	addrdb.cpp
+	avalanche.cpp
 	bloom.cpp
 	blockencodings.cpp
 	chain.cpp
 	checkpoints.cpp
 	config.cpp
+	consensus/activation.cpp
+	consensus/tx_verify.cpp
 	globals.cpp
 	httprpc.cpp
 	httpserver.cpp
@@ -180,10 +207,12 @@ add_library(server
 	rest.cpp
 	rpc/abc.cpp
 	rpc/blockchain.cpp
+	rpc/jsonrpcrequest.cpp
 	rpc/mining.cpp
 	rpc/misc.cpp
 	rpc/net.cpp
 	rpc/rawtransaction.cpp
+	rpc/safemode.cpp
 	rpc/server.cpp
 	script/scriptcache.cpp
 	script/sigcache.cpp
@@ -201,22 +230,20 @@ add_library(server
 # This require libevent
 find_package(Event REQUIRED)
 
-target_include_directories(server
-	PRIVATE
-		leveldb/helpers/memenv
-		${EVENT_INCLUDE_DIR}
-)
+target_include_directories(server PRIVATE leveldb/helpers/memenv)
 
 target_link_libraries(server
-	${EVENT_LIBRARY}
+	Event
 	bitcoinconsensus
 	leveldb
 	memenv
 )
 
-if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	target_link_libraries(server ${EVENT_PTHREAD_LIBRARY})
-endif()
+# Test suite.
+add_subdirectory(test)
+
+# Benchmark suite.
+add_subdirectory(bench)
 
 # Wallet
 if(BUILD_BITCOIN_WALLET)
@@ -246,8 +273,7 @@ if(BUILD_BITCOIN_CLI)
 		target_sources(bitcoin-cli PRIVATE bitcoin-cli-res.rc)
 	endif()
 
-	target_include_directories(bitcoin-cli PRIVATE ${EVENT_INCLUDE_DIR})
-	target_link_libraries(bitcoin-cli common rpcclient ${EVENT_LIBRARY})
+	target_link_libraries(bitcoin-cli common rpcclient Event)
 endif()
 
 # bitcoin-tx
@@ -266,9 +292,6 @@ target_link_libraries(bitcoind server)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	target_sources(bitcoind PRIVATE bitcoind-res.rc)
 endif()
-
-# Test suite.
-add_subdirectory(test)
 
 # Bitcoin-qt
 if(BUILD_BITCOIN_QT)

@@ -107,7 +107,7 @@ public:
     CKeyID hdMasterKeyID;
 
     CKeyMetadata() { SetNull(); }
-    CKeyMetadata(int64_t nCreateTime_) {
+    explicit CKeyMetadata(int64_t nCreateTime_) {
         SetNull();
         nCreateTime = nCreateTime_;
     }
@@ -159,8 +159,8 @@ private:
     }
 
 public:
-    CWalletDB(CWalletDBWrapper &dbw, const char *pszMode = "r+",
-              bool _fFlushOnClose = true)
+    explicit CWalletDB(CWalletDBWrapper &dbw, const char *pszMode = "r+",
+                       bool _fFlushOnClose = true)
         : batch(dbw, pszMode, _fFlushOnClose), m_dbw(dbw) {}
 
     bool WriteName(const CTxDestination &address, const std::string &strName);
@@ -215,11 +215,11 @@ public:
                                 std::list<CAccountingEntry> &acentries);
 
     DBErrors LoadWallet(CWallet *pwallet);
-    DBErrors FindWalletTx(std::vector<uint256> &vTxHash,
+    DBErrors FindWalletTx(std::vector<TxId> &txIds,
                           std::vector<CWalletTx> &vWtx);
     DBErrors ZapWalletTx(std::vector<CWalletTx> &vWtx);
-    DBErrors ZapSelectTx(std::vector<uint256> &vHashIn,
-                         std::vector<uint256> &vHashOut);
+    DBErrors ZapSelectTx(std::vector<TxId> &txIdsIn,
+                         std::vector<TxId> &txIdsOut);
     /* Try to (very carefully!) recover wallet database (with a possible key
      * type filter) */
     static bool Recover(const std::string &filename, void *callbackDataIn,
@@ -240,11 +240,11 @@ public:
     static bool IsKeyType(const std::string &strType);
     /* verifies the database environment */
     static bool VerifyEnvironment(const std::string &walletFile,
-                                  const fs::path &dataDir,
+                                  const fs::path &walletDir,
                                   std::string &errorStr);
     /* verifies the database file */
     static bool VerifyDatabaseFile(const std::string &walletFile,
-                                   const fs::path &dataDir,
+                                   const fs::path &walletDir,
                                    std::string &warningStr,
                                    std::string &errorStr);
 

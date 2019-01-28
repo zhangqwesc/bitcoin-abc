@@ -19,7 +19,6 @@
 
 #include <cstdint>
 
-#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <boost/test/unit_test.hpp>
 
 // Tests these internal-to-net_processing.cpp methods:
@@ -41,7 +40,144 @@ CService ip(uint32_t i) {
 
 static NodeId id = 0;
 
+void UpdateLastBlockAnnounceTime(NodeId node, int64_t time_in_seconds);
+
 BOOST_FIXTURE_TEST_SUITE(DoS_tests, TestingSetup)
+
+// Test eviction of an outbound peer whose chain never advances
+// Mock a node connection, and use mocktime to simulate a peer which never sends
+// any headers messages. PeerLogic should decide to evict that outbound peer,
+// after the appropriate timeouts.
+// Note that we protect 4 outbound nodes from being subject to this logic; this
+// test takes advantage of that protection only being applied to nodes which
+// send headers with sufficient work.
+BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
+    const Config &config = GetConfig();
+    std::atomic<bool> interruptDummy(false);
+
+    // Mock an outbound peer
+    CAddress addr1(ip(0xa0b0c001), NODE_NONE);
+    CNode dummyNode1(id++, ServiceFlags(NODE_NETWORK), 0, INVALID_SOCKET, addr1,
+                     0, 0, CAddress(), "",
+                     /*fInboundIn=*/false);
+    dummyNode1.SetSendVersion(PROTOCOL_VERSION);
+
+    peerLogic->InitializeNode(config, &dummyNode1);
+    dummyNode1.nVersion = 1;
+    dummyNode1.fSuccessfullyConnected = true;
+
+    // This test requires that we have a chain with non-zero work.
+    BOOST_CHECK(chainActive.Tip() != nullptr);
+    BOOST_CHECK(chainActive.Tip()->nChainWork > 0);
+
+    // Test starts here
+    // should result in getheaders
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+    BOOST_CHECK(dummyNode1.vSendMsg.size() > 0);
+    dummyNode1.vSendMsg.clear();
+
+    int64_t nStartTime = GetTime();
+    // Wait 21 minutes
+    SetMockTime(nStartTime + 21 * 60);
+    // should result in getheaders
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+    BOOST_CHECK(dummyNode1.vSendMsg.size() > 0);
+    // Wait 3 more minutes
+    SetMockTime(nStartTime + 24 * 60);
+    // should result in disconnect
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+    BOOST_CHECK(dummyNode1.fDisconnect == true);
+    SetMockTime(0);
+
+    bool dummy;
+    peerLogic->FinalizeNode(config, dummyNode1.GetId(), dummy);
+}
+
+void AddRandomOutboundPeer(const Config &config, std::vector<CNode *> &vNodes,
+                           PeerLogicValidation &peerLogic) {
+    CAddress addr(ip(GetRandInt(0xffffffff)), NODE_NONE);
+    vNodes.emplace_back(new CNode(id++, ServiceFlags(NODE_NETWORK), 0,
+                                  INVALID_SOCKET, addr, 0, 0, CAddress(), "",
+                                  /*fInboundIn=*/false));
+    CNode &node = *vNodes.back();
+    node.SetSendVersion(PROTOCOL_VERSION);
+
+    peerLogic.InitializeNode(config, &node);
+    node.nVersion = 1;
+    node.fSuccessfullyConnected = true;
+
+    CConnmanTest::AddNode(node);
+}
+
+BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
+    const Config &config = GetConfig();
+    const Consensus::Params &consensusParams =
+        config.GetChainParams().GetConsensus();
+    constexpr int nMaxOutbound = 8;
+    CConnman::Options options;
+    options.nMaxConnections = 125;
+    options.nMaxOutbound = nMaxOutbound;
+    options.nMaxFeeler = 1;
+
+    connman->Init(options);
+    std::vector<CNode *> vNodes;
+
+    // Mock some outbound peers
+    for (int i = 0; i < nMaxOutbound; ++i) {
+        AddRandomOutboundPeer(config, vNodes, *peerLogic);
+    }
+
+    peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
+
+    // No nodes should be marked for disconnection while we have no extra peers
+    for (const CNode *node : vNodes) {
+        BOOST_CHECK(node->fDisconnect == false);
+    }
+
+    SetMockTime(GetTime() + 3 * consensusParams.nPowTargetSpacing + 1);
+
+    // Now tip should definitely be stale, and we should look for an extra
+    // outbound peer
+    peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
+    BOOST_CHECK(connman->GetTryNewOutboundPeer());
+
+    // Still no peers should be marked for disconnection
+    for (const CNode *node : vNodes) {
+        BOOST_CHECK(node->fDisconnect == false);
+    }
+
+    // If we add one more peer, something should get marked for eviction
+    // on the next check (since we're mocking the time to be in the future, the
+    // required time connected check should be satisfied).
+    AddRandomOutboundPeer(config, vNodes, *peerLogic);
+
+    peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
+    for (int i = 0; i < nMaxOutbound; ++i) {
+        BOOST_CHECK(vNodes[i]->fDisconnect == false);
+    }
+    // Last added node should get marked for eviction
+    BOOST_CHECK(vNodes.back()->fDisconnect == true);
+
+    vNodes.back()->fDisconnect = false;
+
+    // Update the last announced block time for the last
+    // peer, and check that the next newest node gets evicted.
+    UpdateLastBlockAnnounceTime(vNodes.back()->GetId(), GetTime());
+
+    peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
+    for (int i = 0; i < nMaxOutbound - 1; ++i) {
+        BOOST_CHECK(vNodes[i]->fDisconnect == false);
+    }
+    BOOST_CHECK(vNodes[nMaxOutbound - 1]->fDisconnect == true);
+    BOOST_CHECK(vNodes.back()->fDisconnect == false);
+
+    bool dummy;
+    for (const CNode *node : vNodes) {
+        peerLogic->FinalizeNode(config, node->GetId(), dummy);
+    }
+
+    CConnmanTest::ClearNodes();
+}
 
 BOOST_AUTO_TEST_CASE(DoS_banning) {
     const Config &config = GetConfig();
@@ -49,35 +185,39 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
 
     connman->ClearBanned();
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
-    CNode dummyNode1(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 0, 0, "",
-                     true);
+    CNode dummyNode1(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 0, 0,
+                     CAddress(), "", true);
     dummyNode1.SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(config, &dummyNode1, *connman);
+    peerLogic->InitializeNode(config, &dummyNode1);
     dummyNode1.nVersion = 1;
     dummyNode1.fSuccessfullyConnected = true;
     // Should get banned.
     Misbehaving(dummyNode1.GetId(), 100, "");
-    SendMessages(config, &dummyNode1, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
     BOOST_CHECK(connman->IsBanned(addr1));
     // Different IP, not banned.
     BOOST_CHECK(!connman->IsBanned(ip(0xa0b0c001 | 0x0000ff00)));
 
     CAddress addr2(ip(0xa0b0c002), NODE_NONE);
-    CNode dummyNode2(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr2, 1, 1, "",
-                     true);
+    CNode dummyNode2(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr2, 1, 1,
+                     CAddress(), "", true);
     dummyNode2.SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(config, &dummyNode2, *connman);
+    peerLogic->InitializeNode(config, &dummyNode2);
     dummyNode2.nVersion = 1;
     dummyNode2.fSuccessfullyConnected = true;
     Misbehaving(dummyNode2.GetId(), 50, "");
-    SendMessages(config, &dummyNode2, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode2, interruptDummy);
     // 2 not banned yet...
     BOOST_CHECK(!connman->IsBanned(addr2));
     // ... but 1 still should be.
     BOOST_CHECK(connman->IsBanned(addr1));
     Misbehaving(dummyNode2.GetId(), 50, "");
-    SendMessages(config, &dummyNode2, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode2, interruptDummy);
     BOOST_CHECK(connman->IsBanned(addr2));
+
+    bool dummy;
+    peerLogic->FinalizeNode(config, dummyNode1.GetId(), dummy);
+    peerLogic->FinalizeNode(config, dummyNode2.GetId(), dummy);
 }
 
 BOOST_AUTO_TEST_CASE(DoS_banscore) {
@@ -88,22 +228,25 @@ BOOST_AUTO_TEST_CASE(DoS_banscore) {
     // because 11 is my favorite number.
     gArgs.ForceSetArg("-banscore", "111");
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
-    CNode dummyNode1(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 3, 1, "",
-                     true);
+    CNode dummyNode1(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 3, 1,
+                     CAddress(), "", true);
     dummyNode1.SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(config, &dummyNode1, *connman);
+    peerLogic->InitializeNode(config, &dummyNode1);
     dummyNode1.nVersion = 1;
     dummyNode1.fSuccessfullyConnected = true;
     Misbehaving(dummyNode1.GetId(), 100, "");
-    SendMessages(config, &dummyNode1, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
     BOOST_CHECK(!connman->IsBanned(addr1));
     Misbehaving(dummyNode1.GetId(), 10, "");
-    SendMessages(config, &dummyNode1, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
     BOOST_CHECK(!connman->IsBanned(addr1));
     Misbehaving(dummyNode1.GetId(), 1, "");
-    SendMessages(config, &dummyNode1, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
     BOOST_CHECK(connman->IsBanned(addr1));
     gArgs.ForceSetArg("-banscore", std::to_string(DEFAULT_BANSCORE_THRESHOLD));
+
+    bool dummy;
+    peerLogic->FinalizeNode(config, dummyNode1.GetId(), dummy);
 }
 
 BOOST_AUTO_TEST_CASE(DoS_bantime) {
@@ -116,15 +259,15 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
     SetMockTime(nStartTime);
 
     CAddress addr(ip(0xa0b0c001), NODE_NONE);
-    CNode dummyNode(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr, 4, 4, "",
-                    true);
+    CNode dummyNode(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr, 4, 4,
+                    CAddress(), "", true);
     dummyNode.SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(config, &dummyNode, *connman);
+    peerLogic->InitializeNode(config, &dummyNode);
     dummyNode.nVersion = 1;
     dummyNode.fSuccessfullyConnected = true;
 
     Misbehaving(dummyNode.GetId(), 100, "");
-    SendMessages(config, &dummyNode, *connman, interruptDummy);
+    peerLogic->SendMessages(config, &dummyNode, interruptDummy);
     BOOST_CHECK(connman->IsBanned(addr));
 
     SetMockTime(nStartTime + 60 * 60);
@@ -132,12 +275,17 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
 
     SetMockTime(nStartTime + 60 * 60 * 24 + 1);
     BOOST_CHECK(!connman->IsBanned(addr));
+
+    bool dummy;
+    peerLogic->FinalizeNode(config, dummyNode.GetId(), dummy);
 }
 
 CTransactionRef RandomOrphan() {
     std::map<uint256, COrphanTx>::iterator it;
     it = mapOrphanTransactions.lower_bound(InsecureRand256());
-    if (it == mapOrphanTransactions.end()) it = mapOrphanTransactions.begin();
+    if (it == mapOrphanTransactions.end()) {
+        it = mapOrphanTransactions.begin();
+    }
     return it->second.tx;
 }
 
@@ -151,8 +299,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
     for (int i = 0; i < 50; i++) {
         CMutableTransaction tx;
         tx.vin.resize(1);
-        tx.vin[0].prevout.n = 0;
-        tx.vin[0].prevout.hash = InsecureRand256();
+        tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
         tx.vin[0].scriptSig << OP_1;
         tx.vout.resize(1);
         tx.vout[0].nValue = 1 * CENT;
@@ -168,8 +315,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
 
         CMutableTransaction tx;
         tx.vin.resize(1);
-        tx.vin[0].prevout.n = 0;
-        tx.vin[0].prevout.hash = txPrev->GetId();
+        tx.vin[0].prevout = COutPoint(txPrev->GetId(), 0);
         tx.vout.resize(1);
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
@@ -189,9 +335,8 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout[0].scriptPubKey =
             GetScriptForDestination(key.GetPubKey().GetID());
         tx.vin.resize(2777);
-        for (unsigned int j = 0; j < tx.vin.size(); j++) {
-            tx.vin[j].prevout.n = j;
-            tx.vin[j].prevout.hash = txPrev->GetId();
+        for (size_t j = 0; j < tx.vin.size(); j++) {
+            tx.vin[j].prevout = COutPoint(txPrev->GetId(), j);
         }
         SignSignature(keystore, *txPrev, tx, 0, SigHashType());
         // Re-use same signature for other inputs

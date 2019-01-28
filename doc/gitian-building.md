@@ -1,17 +1,17 @@
 Gitian building
 ================
 
-*Setup instructions for a Gitian build of Bitcoin Core using an Ubuntu VM or physical system.*
+*Setup instructions for a Gitian build of Bitcoin ABC using an Ubuntu VM or physical system.*
 
 Gitian is the deterministic build process that is used to build the Bitcoin
-Core executables. It provides a way to be reasonably sure that the
+ABC executables. It provides a way to be reasonably sure that the
 executables are really built from the source on GitHub. It also makes sure that
 the same, tested dependencies are used and statically built into the executable.
 
 Multiple developers build the source code by following a specific descriptor
 ("recipe"), cryptographically sign the result, and upload the resulting signature.
 These results are compared and only if they match, the build is accepted and uploaded
-to bitcoin.org.
+to bitcoinabc.org.
 
 More independent Gitian builders are needed, which is why this guide exists.
 It is preferred you follow these steps yourself instead of using someone else's
@@ -43,7 +43,7 @@ Requirements:
  - A machine with at least 64b of disk space
  - 16GB of RAM
  - Several installed tools:
-   - [Vagrant](http://vagrantup.com)
+   - [Vagrant](https://www.vagrantup.com)
    - [Packer](https://www.packer.io)
    - [Virtualbox](https://www.virtualbox.org)
 
@@ -57,7 +57,7 @@ pushd
 cd /tmp/
 git clone https://github.com/boxcutter/ubuntu.git
 cd ubuntu
-git checkout 2e7a0d5631dadf7576c7c4d2f52856317031653b
+git checkout 7d1820c186d76122445c092bc2b872a8a94166ce
 packer build -var-file=ubuntu1604.json -only=virtualbox-iso ubuntu.json
 vagrant box add --name abc-xenial box/virtualbox/ubuntu1604-0.1.0.box
 popd
@@ -88,7 +88,7 @@ Execute the following as user `vagrant`:
 
 ```bash
 cd gitian-builder
-bin/make-base-vm --lxc --arch amd64 --suite xenial
+./bin/make-base-vm --lxc --distro debian --suite stretch --arch amd64
 ```
 
 There will be a lot of warnings printed during the build of the image. These
@@ -105,8 +105,29 @@ COMMIT=v0.16.0 # or whatever release tag you wish
 
 # Note the path to descriptors assumes vagrant was used.  These files are within the ABC repository normally.
 ./bin/gbuild --commit bitcoin=${COMMIT} --url bitcoin=${URL} /vagrant/contrib/gitian-descriptors/gitian-linux.yml
+# Note: If you plan on signing the binaries generated during this process, be
+# sure to copy them otherwise they will be overwritten by the next gbuild call.
+cp -r ./build/out/* /vagrant/gitian/linux
+# Also copy the manifest files in the same manner:
+cp ./result/bitcoin-abc-*-linux-res.yml /vagrant/gitian/linux/
 ./bin/gbuild --commit bitcoin=${COMMIT} --url bitcoin=${URL} /vagrant/contrib/gitian-descriptors/gitian-win.yml
+cp -r ./build/out/* /vagrant/gitian/win
+cp ./result/bitcoin-abc-*-win-res.yml /vagrant/gitian/win/
 ./bin/gbuild --commit bitcoin=${COMMIT} --url bitcoin=${URL} /vagrant/contrib/gitian-descriptors/gitian-osx.yml
+cp -r ./build/out/* /vagrant/gitian/osx
+cp ./result/bitcoin-abc-*-osx-res.yml /vagrant/gitian/osx/
+```
+
+Note on the OSX build: If you encounter an error about a missing MacOSX10.11.sdk.tar.gz, then follow these steps:
+```
+cd ./inputs
+curl -LO https://storage.googleapis.com/f4936e83b2dcbca742be51fb9692b153/MacOSX10.11.sdk.tar.gz
+```
+
+Note: For executing gitian builds on local changes, change URL and COMMIT:
+```bash
+URL=/vagrant/
+COMMIT=<git-commit-hash> # replace <git-commit-hash> with your latest changes
 ```
 
 This may take some time as it will build all the dependencies needed for each

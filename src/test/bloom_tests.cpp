@@ -19,7 +19,6 @@
 #include <vector>
 
 #include <boost/test/unit_test.hpp>
-#include <boost/tuple/tuple.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(bloom_tests, BasicTestingSetup)
 
@@ -228,8 +227,9 @@ BOOST_AUTO_TEST_CASE(bloom_match) {
                            0);
     {
         std::vector<uint8_t> data(32 + sizeof(unsigned int));
-        memcpy(&data[0], prevOutPoint.hash.begin(), 32);
-        memcpy(&data[32], &prevOutPoint.n, sizeof(unsigned int));
+        memcpy(&data[0], prevOutPoint.GetTxId().begin(), 32);
+        uint32_t n = prevOutPoint.GetN();
+        memcpy(&data[32], &n, sizeof(uint32_t));
         filter.insert(data);
     }
     BOOST_CHECK_MESSAGE(

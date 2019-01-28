@@ -13,6 +13,9 @@
 #ifndef WIN32
 #include <arpa/inet.h>
 #endif
+#include <atomic>
+
+static std::atomic<bool> g_initial_block_download_completed(false);
 
 namespace NetMsgType {
 const char *VERSION = "version";
@@ -41,6 +44,8 @@ const char *SENDCMPCT = "sendcmpct";
 const char *CMPCTBLOCK = "cmpctblock";
 const char *GETBLOCKTXN = "getblocktxn";
 const char *BLOCKTXN = "blocktxn";
+const char *AVAPOLL = "avapoll";
+const char *AVARESPONSE = "avaresponse";
 
 bool IsBlockLike(const std::string &strCommand) {
     return strCommand == NetMsgType::BLOCK ||
@@ -71,7 +76,7 @@ static const std::vector<std::string>
 CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn) {
     memcpy(std::begin(pchMessageStart), std::begin(pchMessageStartIn),
            MESSAGE_START_SIZE);
-    memset(pchCommand, 0, sizeof(pchCommand));
+    memset(pchCommand.data(), 0, sizeof(pchCommand));
     nMessageSize = -1;
     memset(pchChecksum, 0, CHECKSUM_SIZE);
 }
@@ -81,15 +86,17 @@ CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn,
                                unsigned int nMessageSizeIn) {
     memcpy(std::begin(pchMessageStart), std::begin(pchMessageStartIn),
            MESSAGE_START_SIZE);
-    memset(pchCommand, 0, sizeof(pchCommand));
-    strncpy(pchCommand, pszCommand, COMMAND_SIZE);
+    memset(pchCommand.data(), 0, sizeof(pchCommand));
+    strncpy(pchCommand.data(), pszCommand, COMMAND_SIZE);
     nMessageSize = nMessageSizeIn;
     memset(pchChecksum, 0, CHECKSUM_SIZE);
 }
 
 std::string CMessageHeader::GetCommand() const {
-    return std::string(pchCommand,
-                       pchCommand + strnlen(pchCommand, COMMAND_SIZE));
+    // return std::string(pchCommand.begin(), pchCommand.end());
+    return std::string(pchCommand.data(),
+                       pchCommand.data() +
+                           strnlen(pchCommand.data(), COMMAND_SIZE));
 }
 
 static bool
@@ -102,11 +109,11 @@ CheckHeaderMagicAndCommand(const CMessageHeader &header,
     }
 
     // Check the command string for errors
-    for (const char *p1 = header.pchCommand;
-         p1 < header.pchCommand + CMessageHeader::COMMAND_SIZE; p1++) {
+    for (const char *p1 = header.pchCommand.data();
+         p1 < header.pchCommand.data() + CMessageHeader::COMMAND_SIZE; p1++) {
         if (*p1 == 0) {
             // Must be all zeros after the first zero
-            for (; p1 < header.pchCommand + CMessageHeader::COMMAND_SIZE;
+            for (; p1 < header.pchCommand.data() + CMessageHeader::COMMAND_SIZE;
                  p1++) {
                 if (*p1 != 0) {
                     return false;
@@ -177,6 +184,18 @@ bool CMessageHeader::IsOversized(const Config &config) const {
     return false;
 }
 
+ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {
+    if ((services & NODE_NETWORK_LIMITED) &&
+        g_initial_block_download_completed) {
+        return ServiceFlags(NODE_NETWORK_LIMITED);
+    }
+    return ServiceFlags(NODE_NETWORK);
+}
+
+void SetServiceFlagsIBDCache(bool state) {
+    g_initial_block_download_completed = state;
+}
+
 CAddress::CAddress() : CService() {
     Init();
 }
@@ -191,23 +210,8 @@ void CAddress::Init() {
     nTime = 100000000;
 }
 
-CInv::CInv() {
-    type = 0;
-    hash.SetNull();
-}
-
-CInv::CInv(int typeIn, const uint256 &hashIn) {
-    type = typeIn;
-    hash = hashIn;
-}
-
-bool operator<(const CInv &a, const CInv &b) {
-    return (a.type < b.type || (a.type == b.type && a.hash < b.hash));
-}
-
 std::string CInv::GetCommand() const {
     std::string cmd;
-    if (type & MSG_EXT_FLAG) cmd.append("extblk-");
     switch (GetKind()) {
         case MSG_TX:
             return cmd.append(NetMsgType::TX);

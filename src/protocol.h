@@ -22,10 +22,10 @@
 class Config;
 
 /**
- * Maximum length of incoming protocol messages (Currently 1MB).
+ * Maximum length of incoming protocol messages (Currently 2MB).
  * NB: Messages propagating block content are not subject to this limit.
  */
-static const unsigned int MAX_PROTOCOL_MESSAGE_LENGTH = 1 * 1024 * 1024;
+static const unsigned int MAX_PROTOCOL_MESSAGE_LENGTH = 2 * 1024 * 1024;
 
 /**
  * Message header.
@@ -49,7 +49,7 @@ public:
     };
     typedef std::array<uint8_t, MESSAGE_START_SIZE> MessageMagic;
 
-    CMessageHeader(const MessageMagic &pchMessageStartIn);
+    explicit CMessageHeader(const MessageMagic &pchMessageStartIn);
     CMessageHeader(const MessageMagic &pchMessageStartIn,
                    const char *pszCommand, unsigned int nMessageSizeIn);
 
@@ -69,7 +69,7 @@ public:
     }
 
     MessageMagic pchMessageStart;
-    char pchCommand[COMMAND_SIZE];
+    std::array<char, COMMAND_SIZE> pchCommand;
     uint32_t nMessageSize;
     uint8_t pchChecksum[CHECKSUM_SIZE];
 };
@@ -252,6 +252,16 @@ extern const char *GETBLOCKTXN;
  * @since protocol version 70014 as described by BIP 152
  */
 extern const char *BLOCKTXN;
+/**
+ * Contains an AvalanchePoll.
+ * Peer should respond with "avaresponse" message.
+ */
+extern const char *AVAPOLL;
+/**
+ * Contains an AvalancheResponse.
+ * Sent in response to a "avapoll" message.
+ */
+extern const char *AVARESPONSE;
 
 /**
  * Indicate if the message is used to transmit the content of a block.
@@ -270,9 +280,9 @@ const std::vector<std::string> &getAllNetMessageTypes();
 enum ServiceFlags : uint64_t {
     // Nothing
     NODE_NONE = 0,
-    // NODE_NETWORK means that the node is capable of serving the block chain.
-    // It is currently set by all Bitcoin ABC nodes, and is unset by SPV clients
-    // or other peers that just want network services but don't provide them.
+    // NODE_NETWORK means that the node is capable of serving the complete block
+    // chain. It is currently set by all Bitcoin ABC non pruned nodes, and is
+    // unset by SPV clients or other light clients.
     NODE_NETWORK = (1 << 0),
     // NODE_GETUTXO means the node is capable of responding to the getutxo
     // protocol request. Bitcoin ABC does not support this but a patch set
@@ -294,6 +304,10 @@ enum ServiceFlags : uint64_t {
     // TODO: remove (free up) the NODE_BITCOIN_CASH service bit once no longer
     // needed.
     NODE_BITCOIN_CASH = (1 << 5),
+    // NODE_NETWORK_LIMITED means the same as NODE_NETWORK with the limitation
+    // of only serving the last 288 (2 day) blocks
+    // See BIP159 for details on how this is implemented.
+    NODE_NETWORK_LIMITED = (1 << 10),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
@@ -302,7 +316,60 @@ enum ServiceFlags : uint64_t {
     // collisions and other cases where nodes may be advertising a service they
     // do not actually support. Other service bits should be allocated via the
     // BIP process.
+
+    // NODE_AVALANCHE means the node supports Bitcoin Cash's avalanche
+    // preconsensus mechanism.
+    NODE_AVALANCHE = (1 << 24),
 };
+
+/**
+ * Gets the set of service flags which are "desirable" for a given peer.
+ *
+ * These are the flags which are required for a peer to support for them
+ * to be "interesting" to us, ie for us to wish to use one of our few
+ * outbound connection slots for or for us to wish to prioritize keeping
+ * their connection around.
+ *
+ * Relevant service flags may be peer- and state-specific in that the
+ * version of the peer may determine which flags are required (eg in the
+ * case of NODE_NETWORK_LIMITED where we seek out NODE_NETWORK peers
+ * unless they set NODE_NETWORK_LIMITED and we are out of IBD, in which
+ * case NODE_NETWORK_LIMITED suffices).
+ *
+ * Thus, generally, avoid calling with peerServices == NODE_NONE, unless
+ * state-specific flags must absolutely be avoided. When called with
+ * peerServices == NODE_NONE, the returned desirable service flags are
+ * guaranteed to not change dependant on state - ie they are suitable for
+ * use when describing peers which we know to be desirable, but for which
+ * we do not have a confirmed set of service flags.
+ *
+ * If the NODE_NONE return value is changed, contrib/seeds/makeseeds.py
+ * should be updated appropriately to filter for the same nodes.
+ */
+ServiceFlags GetDesirableServiceFlags(ServiceFlags services);
+
+/**
+ * Set the current IBD status in order to figure out the desirable service
+ * flags
+ */
+void SetServiceFlagsIBDCache(bool status);
+
+/**
+ * A shortcut for (services & GetDesirableServiceFlags(services))
+ * == GetDesirableServiceFlags(services), ie determines whether the given
+ * set of service flags are sufficient for a peer to be "relevant".
+ */
+static inline bool HasAllDesirableServiceFlags(ServiceFlags services) {
+    return !(GetDesirableServiceFlags(services) & (~services));
+}
+
+/**
+ * Checks if a peer with the given service flags may be capable of having a
+ * robust address-storage DB.
+ */
+static inline bool MayHaveUsefulAddressDB(ServiceFlags services) {
+    return (services & NODE_NETWORK) || (services & NODE_NETWORK_LIMITED);
+}
 
 /**
  * A CService with information about it as peer.
@@ -339,7 +406,6 @@ public:
 };
 
 /** getdata message type flags */
-const uint32_t MSG_EXT_FLAG = 1 << 29;
 const uint32_t MSG_TYPE_MASK = 0xffffffff >> 3;
 
 /** getdata / inv message types.
@@ -355,17 +421,22 @@ enum GetDataMsg {
     MSG_FILTERED_BLOCK = 3,
     //!< Defined in BIP152
     MSG_CMPCT_BLOCK = 4,
-
-    //!< Extension block
-    MSG_EXT_TX = MSG_TX | MSG_EXT_FLAG,
-    MSG_EXT_BLOCK = MSG_BLOCK | MSG_EXT_FLAG,
 };
 
-/** inv message data */
+/**
+ * Inv(ventory) message data.
+ * Intended as non-ambiguous identifier of objects (eg. transactions, blocks)
+ * held by peers.
+ */
 class CInv {
 public:
-    CInv();
-    CInv(int typeIn, const uint256 &hashIn);
+    // TODO: make private (improves encapsulation)
+    uint32_t type;
+    uint256 hash;
+
+public:
+    CInv() : type(0), hash() {}
+    CInv(uint32_t typeIn, const uint256 &hashIn) : type(typeIn), hash(hashIn) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -375,7 +446,9 @@ public:
         READWRITE(hash);
     }
 
-    friend bool operator<(const CInv &a, const CInv &b);
+    friend bool operator<(const CInv &a, const CInv &b) {
+        return a.type < b.type || (a.type == b.type && a.hash < b.hash);
+    }
 
     std::string GetCommand() const;
     std::string ToString() const;
@@ -392,11 +465,6 @@ public:
         return k == MSG_BLOCK || k == MSG_FILTERED_BLOCK ||
                k == MSG_CMPCT_BLOCK;
     }
-
-    // TODO: make private (improves encapsulation)
-public:
-    int type;
-    uint256 hash;
 };
 
 #endif // BITCOIN_PROTOCOL_H

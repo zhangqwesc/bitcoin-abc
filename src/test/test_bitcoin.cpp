@@ -11,6 +11,7 @@
 #include "crypto/sha256.h"
 #include "fs.h"
 #include "key.h"
+#include "logging.h"
 #include "miner.h"
 #include "net_processing.h"
 #include "pubkey.h"
@@ -24,8 +25,6 @@
 #include "ui_interface.h"
 #include "validation.h"
 
-#include "test/testutil.h"
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -35,10 +34,19 @@
 #include <memory>
 #include <thread>
 
+void CConnmanTest::AddNode(CNode &node) {
+    LOCK(g_connman->cs_vNodes);
+    g_connman->vNodes.push_back(&node);
+}
+
+void CConnmanTest::ClearNodes() {
+    LOCK(g_connman->cs_vNodes);
+    g_connman->vNodes.clear();
+}
+
 uint256 insecure_rand_seed = GetRandHash();
 FastRandomContext insecure_rand_ctx(insecure_rand_seed);
 
-extern bool fPrintToConsole;
 extern void noui_connect();
 
 BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
@@ -49,8 +57,10 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
     SetupNetworking();
     InitSignatureCache();
     InitScriptExecutionCache();
+
     // Don't want to write to debug.log file.
-    fPrintToDebugLog = false;
+    GetLogger().m_print_to_file = false;
+
     fCheckBlockIndex = true;
     SelectParams(chainName);
     noui_connect();
@@ -62,27 +72,34 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName) {
 
 BasicTestingSetup::~BasicTestingSetup() {
     ECC_Stop();
-    g_connman.reset();
 }
 
 TestingSetup::TestingSetup(const std::string &chainName)
     : BasicTestingSetup(chainName) {
+    const Config &config = GetConfig();
+    const CChainParams &chainparams = config.GetChainParams();
 
     // Ideally we'd move all the RPC tests to the functional testing framework
     // instead of unit tests, but for now we need these here.
-    const Config &config = GetConfig();
-    RegisterAllRPCCommands(tableRPC);
+    RPCServer rpcServer;
+    RegisterAllRPCCommands(config, rpcServer, tableRPC);
     ClearDatadirCache();
-    pathTemp = GetTempPath() / strprintf("test_bitcoin_%lu_%i",
-                                         (unsigned long)GetTime(),
-                                         (int)(InsecureRandRange(100000)));
+    pathTemp = fs::temp_directory_path() /
+               strprintf("test_bitcoin_%lu_%i", (unsigned long)GetTime(),
+                         (int)(InsecureRandRange(100000)));
     fs::create_directories(pathTemp);
     gArgs.ForceSetArg("-datadir", pathTemp.string());
-    mempool.setSanityCheck(1.0);
-    pblocktree = new CBlockTreeDB(1 << 20, true, false, false, 64, 1 << 30);
-    pcoinsdbview = new CCoinsViewDB(1 << 23, true);
-    pcoinsTip = new CCoinsViewCache(pcoinsdbview);
-    if (!InitBlockIndex(config)) {
+
+    // Note that because we don't bother running a scheduler thread here,
+    // callbacks via CValidationInterface are unreliable, but that's OK,
+    // our unit tests aren't testing multiple parts of the code at once.
+    GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
+
+    g_mempool.setSanityCheck(1.0);
+    pblocktree.reset(new CBlockTreeDB(1 << 20, true, false, false, 64, 1 << 30));
+    pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
+    pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
+    if (!LoadGenesisBlock(chainparams)) {
         throw std::runtime_error("InitBlockIndex failed.");
     }
     {
@@ -99,17 +116,20 @@ TestingSetup::TestingSetup(const std::string &chainName)
     // Deterministic randomness for tests.
     g_connman = std::unique_ptr<CConnman>(new CConnman(config, 0x1337, 0x1337));
     connman = g_connman.get();
-    RegisterNodeSignals(GetNodeSignals());
+    peerLogic.reset(new PeerLogicValidation(connman, scheduler));
 }
 
 TestingSetup::~TestingSetup() {
-    UnregisterNodeSignals(GetNodeSignals());
     threadGroup.interrupt_all();
     threadGroup.join_all();
+    GetMainSignals().FlushBackgroundCallbacks();
+    GetMainSignals().UnregisterBackgroundSignalScheduler();
+    g_connman.reset();
+    peerLogic.reset();
     UnloadBlockIndex();
-    delete pcoinsTip;
-    delete pcoinsdbview;
-    delete pblocktree;
+    pcoinsTip.reset();
+    pcoinsdbview.reset();
+    pblocktree.reset();
     fs::remove_all(pathTemp);
 }
 
@@ -134,7 +154,7 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
     const std::vector<CMutableTransaction> &txns, const CScript &scriptPubKey) {
     const Config &config = GetConfig();
     std::unique_ptr<CBlockTemplate> pblocktemplate =
-        BlockAssembler(config).CreateNewBlock(scriptPubKey);
+        BlockAssembler(config, g_mempool).CreateNewBlock(scriptPubKey);
     CBlock &block = pblocktemplate->block;
 
     // Replace mempool-selected txns with just coinbase plus passed-in txns:
@@ -142,6 +162,14 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
     for (const CMutableTransaction &tx : txns) {
         block.vtx.push_back(MakeTransactionRef(tx));
     }
+
+    // Order transactions by canonical order
+    std::sort(std::begin(block.vtx) + 1, std::end(block.vtx),
+              [](const std::shared_ptr<const CTransaction> &txa,
+                 const std::shared_ptr<const CTransaction> &txb) -> bool {
+                  return txa->GetId() < txb->GetId();
+              });
+
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
     unsigned int extraNonce = 0;
     IncrementExtraNonce(config, &block, chainActive.Tip(), extraNonce);
@@ -171,7 +199,7 @@ CTxMemPoolEntry TestMemPoolEntryHelper::FromTx(const CTransaction &txn,
     // Hack to assume either it's completely dependent on other mempool txs or
     // not at all.
     Amount inChainValue =
-        pool && pool->HasNoInputsOf(txn) ? txn.GetValueOut() : Amount(0);
+        pool && pool->HasNoInputsOf(txn) ? txn.GetValueOut() : Amount::zero();
 
     return CTxMemPoolEntry(MakeTransactionRef(txn), nFee, nTime, dPriority,
                            nHeight, inChainValue, spendsCoinbase, sigOpCost,

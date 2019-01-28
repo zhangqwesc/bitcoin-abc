@@ -10,16 +10,22 @@ import http.client
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 
+from .authproxy import JSONRPCException
+from .mininode import COIN, ToHex, FromHex, CTransaction
 from .util import (
     assert_equal,
     get_rpc_proxy,
     rpc_url,
     wait_until,
+    p2p_port,
 )
-from .authproxy import JSONRPCException
+
+# For Python 3.4 compatibility
+JSONDecodeError = getattr(json, "JSONDecodeError", ValueError)
 
 BITCOIND_PROC_WAIT_TIMEOUT = 60
 
@@ -32,14 +38,18 @@ class TestNode():
     - state about the node (whether it's running, etc)
     - a Python subprocess.Popen object representing the running process
     - an RPC connection to the node
+    - one or more P2P connections to the node
 
-    To make things easier for the test writer, a bit of magic is happening under the covers.
-    Any unrecognised messages will be dispatched to the RPC connection."""
+    To make things easier for the test writer, any unrecognised messages will
+    be dispatched to the RPC connection."""
 
-    def __init__(self, i, dirname, extra_args, rpchost, timewait, binary, stderr, mocktime, coverage_dir):
+    def __init__(self, i, dirname, extra_args, host, rpc_port, p2p_port, timewait, binary, stderr, mocktime, coverage_dir, use_cli=False):
         self.index = i
         self.datadir = os.path.join(dirname, "node" + str(i))
-        self.rpchost = rpchost
+        self.host = host
+        self.rpc_port = rpc_port
+        self.p2p_port = p2p_port
+        self.name = "testnode-{}".format(i)
         if timewait:
             self.rpc_timeout = timewait
         else:
@@ -54,30 +64,39 @@ class TestNode():
         # Most callers will just need to add extra args to the standard list below. For those callers that need more flexibity, they can just set the args property directly.
         self.extra_args = extra_args
         self.args = [self.binary, "-datadir=" + self.datadir, "-server", "-keypool=1", "-discover=0", "-rest", "-logtimemicros",
-                     "-debug", "-debugexclude=libevent", "-debugexclude=leveldb", "-mocktime=" + str(mocktime), "-uacomment=testnode%d" % i]
+                     "-debug", "-debugexclude=libevent", "-debugexclude=leveldb", "-mocktime=" + str(mocktime), "-uacomment=" + self.name]
 
         self.cli = TestNodeCLI(
             os.getenv("BITCOINCLI", "bitcoin-cli"), self.datadir)
+        self.use_cli = use_cli
 
         self.running = False
         self.process = None
         self.rpc_connected = False
         self.rpc = None
         self.url = None
+        self.relay_fee_cache = None
         self.log = logging.getLogger('TestFramework.node%d' % i)
 
-    def __getattr__(self, *args, **kwargs):
-        """Dispatches any unrecognised messages to the RPC connection."""
-        assert self.rpc_connected and self.rpc is not None, "Error: no RPC connection"
-        return self.rpc.__getattr__(*args, **kwargs)
+        self.p2ps = []
 
-    def start(self, extra_args=None, stderr=None):
+    def __getattr__(self, name):
+        """Dispatches any unrecognised messages to the RPC connection or a CLI instance."""
+        if self.use_cli:
+            return getattr(self.cli, name)
+        else:
+            assert self.rpc is not None, "Error: RPC not initialized"
+            assert self.rpc_connected, "Error: No RPC connection"
+            return getattr(self.rpc, name)
+
+    def start(self, extra_args=None, stderr=None, *args, **kwargs):
         """Start the node."""
         if extra_args is None:
             extra_args = self.extra_args
         if stderr is None:
             stderr = self.stderr
-        self.process = subprocess.Popen(self.args + extra_args, stderr=stderr)
+        self.process = subprocess.Popen(
+            self.args + extra_args, stderr=stderr, *args, **kwargs)
         self.running = True
         self.log.debug("bitcoind started, waiting for RPC to come up")
 
@@ -89,7 +108,7 @@ class TestNode():
             assert self.process.poll(
             ) is None, "bitcoind exited with status %i during initialization" % self.process.returncode
             try:
-                self.rpc = get_rpc_proxy(rpc_url(self.datadir, self.index, self.rpchost),
+                self.rpc = get_rpc_proxy(rpc_url(self.datadir, self.host, self.rpc_port),
                                          self.index, timeout=self.rpc_timeout, coveragedir=self.coverage_dir)
                 self.rpc.getblockcount()
                 # If the call to getblockcount() succeeds then the RPC connection is up
@@ -110,10 +129,13 @@ class TestNode():
         raise AssertionError("Unable to connect to bitcoind")
 
     def get_wallet_rpc(self, wallet_name):
-        assert self.rpc_connected
-        assert self.rpc
-        wallet_path = "wallet/%s" % wallet_name
-        return self.rpc / wallet_path
+        if self.use_cli:
+            return self.cli("-rpcwallet={}".format(wallet_name))
+        else:
+            assert self.rpc_connected
+            assert self.rpc
+            wallet_path = "wallet/{}".format(wallet_name)
+            return self.rpc / wallet_path
 
     def stop_node(self):
         """Stop the node."""
@@ -124,6 +146,7 @@ class TestNode():
             self.stop()
         except http.client.CannotSendRequest:
             self.log.exception("Unable to stop node.")
+        del self.p2ps[:]
 
     def is_node_stopped(self):
         """Checks whether the node has stopped.
@@ -156,6 +179,69 @@ class TestNode():
         self.encryptwallet(passphrase)
         self.wait_until_stopped()
 
+    def relay_fee(self, cached=True):
+        if not self.relay_fee_cache or not cached:
+            self.relay_fee_cache = self.getnetworkinfo()["relayfee"]
+
+        return self.relay_fee_cache
+
+    def calculate_fee(self, tx):
+        # Relay fee is in satoshis per KB.  Thus the 1000, and the COIN added
+        # to get back to an amount of satoshis.
+        billable_size_estimate = tx.billable_size()
+        # Add some padding for signatures
+        # NOTE: Fees must be calculated before signatures are added,
+        # so they will never be included in the billable_size above.
+        billable_size_estimate += len(tx.vin) * 81
+
+        return int(self.relay_fee() / 1000 * billable_size_estimate * COIN)
+
+    def calculate_fee_from_txid(self, txid):
+        ctx = FromHex(CTransaction(), self.getrawtransaction(txid))
+        return self.calculate_fee(ctx)
+
+    def add_p2p_connection(self, p2p_conn, *args, **kwargs):
+        """Add a p2p connection to the node.
+
+        This method adds the p2p connection to the self.p2ps list and also
+        returns the connection to the caller."""
+        if 'dstport' not in kwargs:
+            kwargs['dstport'] = p2p_port(self.index)
+        if 'dstaddr' not in kwargs:
+            kwargs['dstaddr'] = '127.0.0.1'
+
+        p2p_conn.peer_connect(*args, **kwargs)
+        self.p2ps.append(p2p_conn)
+
+        return p2p_conn
+
+    @property
+    def p2p(self):
+        """Return the first p2p connection
+
+        Convenience property - most tests only use a single p2p connection to each
+        node, so this saves having to write node.p2ps[0] many times."""
+        assert self.p2ps, "No p2p connection"
+        return self.p2ps[0]
+
+    def disconnect_p2ps(self):
+        """Close all p2p connections to the node."""
+        for p in self.p2ps:
+            p.peer_disconnect()
+        del self.p2ps[:]
+
+
+class TestNodeCLIAttr:
+    def __init__(self, cli, command):
+        self.cli = cli
+        self.command = command
+
+    def __call__(self, *args, **kwargs):
+        return self.cli.send_cli(self.command, *args, **kwargs)
+
+    def get_request(self, *args, **kwargs):
+        return lambda: self(*args, **kwargs)
+
 
 class TestNodeCLI():
     """Interface to bitcoin-cli for an individual node"""
@@ -165,17 +251,26 @@ class TestNodeCLI():
         self.binary = binary
         self.datadir = datadir
         self.input = None
+        self.log = logging.getLogger('TestFramework.bitcoincli')
 
     def __call__(self, *args, input=None):
         # TestNodeCLI is callable with bitcoin-cli command-line args
-        self.args = [str(arg) for arg in args]
-        self.input = input
-        return self
+        cli = TestNodeCLI(self.binary, self.datadir)
+        cli.args = [str(arg) for arg in args]
+        cli.input = input
+        return cli
 
     def __getattr__(self, command):
-        def dispatcher(*args, **kwargs):
-            return self.send_cli(command, *args, **kwargs)
-        return dispatcher
+        return TestNodeCLIAttr(self, command)
+
+    def batch(self, requests):
+        results = []
+        for request in requests:
+            try:
+                results.append(dict(result=request()))
+            except JSONRPCException as e:
+                results.append(dict(error=e))
+        return results
 
     def send_cli(self, command, *args, **kwargs):
         """Run bitcoin-cli command. Deserializes returned string as python object."""
@@ -190,12 +285,21 @@ class TestNodeCLI():
         if named_args:
             p_args += ["-named"]
         p_args += [command] + pos_args + named_args
+        self.log.debug("Running bitcoin-cli command: {}".format(command))
         process = subprocess.Popen(p_args, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         cli_stdout, cli_stderr = process.communicate(input=self.input)
         returncode = process.poll()
         if returncode:
+            match = re.match(
+                r'error code: ([-0-9]+)\nerror message:\n(.*)', cli_stderr)
+            if match:
+                code, message = match.groups()
+                raise JSONRPCException(dict(code=int(code), message=message))
             # Ignore cli_stdout, raise with cli_stderr
             raise subprocess.CalledProcessError(
                 returncode, self.binary, output=cli_stderr)
-        return json.loads(cli_stdout, parse_float=decimal.Decimal)
+        try:
+            return json.loads(cli_stdout, parse_float=decimal.Decimal)
+        except JSONDecodeError:
+            return cli_stdout.rstrip("\n")

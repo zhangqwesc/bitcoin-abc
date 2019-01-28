@@ -36,6 +36,7 @@ class CWallet;
 
 QT_BEGIN_NAMESPACE
 class QAction;
+class QComboBox;
 class QProgressBar;
 class QProgressDialog;
 QT_END_NAMESPACE
@@ -49,7 +50,6 @@ class BitcoinGUI : public QMainWindow {
     Q_OBJECT
 
 public:
-    static const QString DEFAULT_WALLET;
     static const std::string DEFAULT_UIPLATFORM;
 
     explicit BitcoinGUI(const Config *, const PlatformStyle *platformStyle,
@@ -69,11 +69,10 @@ public:
      * The wallet model represents a bitcoin wallet, and offers access to the
      * list of transactions, address book and sending functionality.
      */
-    bool addWallet(const QString &name, WalletModel *walletModel);
-    bool setCurrentWallet(const QString &name);
+    bool addWallet(WalletModel *walletModel);
     void removeAllWallets();
 #endif // ENABLE_WALLET
-    bool enableWallet;
+    bool enableWallet = false;
 
 protected:
     void changeEvent(QEvent *e) override;
@@ -84,54 +83,58 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
-    ClientModel *clientModel;
-    WalletFrame *walletFrame;
+    ClientModel *clientModel = nullptr;
+    WalletFrame *walletFrame = nullptr;
 
-    UnitDisplayStatusBarControl *unitDisplayControl;
-    QLabel *labelWalletEncryptionIcon;
-    QLabel *labelWalletHDStatusIcon;
-    QLabel *connectionsControl;
-    QLabel *labelBlocksIcon;
-    QLabel *progressBarLabel;
-    QProgressBar *progressBar;
-    QProgressDialog *progressDialog;
+    UnitDisplayStatusBarControl *unitDisplayControl = nullptr;
+    QLabel *labelWalletEncryptionIcon = nullptr;
+    QLabel *labelWalletHDStatusIcon = nullptr;
+    QLabel *connectionsControl = nullptr;
+    QLabel *labelBlocksIcon = nullptr;
+    QLabel *progressBarLabel = nullptr;
+    QProgressBar *progressBar = nullptr;
+    QProgressDialog *progressDialog = nullptr;
 
-    QMenuBar *appMenuBar;
-    QAction *overviewAction;
-    QAction *historyAction;
-    QAction *quitAction;
-    QAction *sendCoinsAction;
-    QAction *sendCoinsMenuAction;
-    QAction *usedSendingAddressesAction;
-    QAction *usedReceivingAddressesAction;
-    QAction *signMessageAction;
-    QAction *verifyMessageAction;
-    QAction *aboutAction;
-    QAction *receiveCoinsAction;
-    QAction *receiveCoinsMenuAction;
-    QAction *optionsAction;
-    QAction *toggleHideAction;
-    QAction *encryptWalletAction;
-    QAction *backupWalletAction;
-    QAction *changePassphraseAction;
-    QAction *aboutQtAction;
-    QAction *openRPCConsoleAction;
-    QAction *openAction;
-    QAction *showHelpMessageAction;
+    QMenuBar *appMenuBar = nullptr;
+    QToolBar *appToolBar = nullptr;
+    QAction *overviewAction = nullptr;
+    QAction *historyAction = nullptr;
+    QAction *quitAction = nullptr;
+    QAction *sendCoinsAction = nullptr;
+    QAction *sendCoinsMenuAction = nullptr;
+    QAction *usedSendingAddressesAction = nullptr;
+    QAction *usedReceivingAddressesAction = nullptr;
+    QAction *signMessageAction = nullptr;
+    QAction *verifyMessageAction = nullptr;
+    QAction *aboutAction = nullptr;
+    QAction *receiveCoinsAction = nullptr;
+    QAction *receiveCoinsMenuAction = nullptr;
+    QAction *optionsAction = nullptr;
+    QAction *toggleHideAction = nullptr;
+    QAction *encryptWalletAction = nullptr;
+    QAction *backupWalletAction = nullptr;
+    QAction *changePassphraseAction = nullptr;
+    QAction *aboutQtAction = nullptr;
+    QAction *openRPCConsoleAction = nullptr;
+    QAction *openAction = nullptr;
+    QAction *showHelpMessageAction = nullptr;
 
-    QSystemTrayIcon *trayIcon;
-    QMenu *trayIconMenu;
-    Notificator *notificator;
-    RPCConsole *rpcConsole;
-    HelpMessageDialog *helpMessageDialog;
-    ModalOverlay *modalOverlay;
+    QLabel *m_wallet_selector_label = nullptr;
+    QComboBox *m_wallet_selector = nullptr;
+
+    QSystemTrayIcon *trayIcon = nullptr;
+    QMenu *trayIconMenu = nullptr;
+    Notificator *notificator = nullptr;
+    RPCConsole *rpcConsole = nullptr;
+    HelpMessageDialog *helpMessageDialog = nullptr;
+    ModalOverlay *modalOverlay = nullptr;
 
     /** Keep track of previous number of blocks, to detect progress */
-    int prevBlocks;
-    int spinnerFrame;
+    int prevBlocks = 0;
+    int spinnerFrame = 0;
 
     const PlatformStyle *platformStyle;
-    const Config *cfg;
+    const Config *config;
 
     /** Create the main UI actions. */
     void createActions();
@@ -184,6 +187,12 @@ public Q_SLOTS:
                  unsigned int style, bool *ret = nullptr);
 
 #ifdef ENABLE_WALLET
+    bool setCurrentWallet(const QString &name);
+    /** Set the UI status indicators based on the currently selected wallet.
+     */
+    void updateWalletStatus();
+
+private:
     /** Set the encryption status as shown in the UI.
        @param[in] status            current encryption status
        @see WalletModel::EncryptionStatus
@@ -196,12 +205,13 @@ public Q_SLOTS:
      */
     void setHDStatus(int hdEnabled);
 
+public Q_SLOTS:
     bool handlePaymentRequest(const SendCoinsRecipient &recipient);
 
     /** Show incoming transaction notification for new transactions. */
     void incomingTransaction(const QString &date, int unit, const Amount amount,
                              const QString &type, const QString &address,
-                             const QString &label);
+                             const QString &label, const QString &walletName);
 #endif // ENABLE_WALLET
 
 private Q_SLOTS:

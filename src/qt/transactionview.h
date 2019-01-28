@@ -6,6 +6,7 @@
 #define BITCOIN_QT_TRANSACTIONVIEW_H
 
 #include "guiutil.h"
+#include "uint256.h"
 
 #include <QKeyEvent>
 #include <QWidget>
@@ -25,10 +26,11 @@ class QSignalMapper;
 class QTableView;
 QT_END_NAMESPACE
 
-/** Widget showing the transaction list for a wallet, including a filter row.
-    Using the filter row, the user can view or export a subset of the
-   transactions.
-  */
+/**
+ * Widget showing the transaction list for a wallet, including a filter row.
+ * Using the filter row, the user can view or export a subset of the
+ * transactions.
+ */
 class TransactionView : public QWidget {
     Q_OBJECT
 
@@ -103,7 +105,9 @@ private Q_SLOTS:
 Q_SIGNALS:
     void doubleClicked(const QModelIndex &);
 
-    /**  Fired when a message should be reported to the user */
+    /**
+     * Fired when a message should be reported to the user.
+     */
     void message(const QString &title, const QString &message,
                  unsigned int style);
 
@@ -115,6 +119,7 @@ public Q_SLOTS:
     void changedAmount(const QString &amount);
     void exportClicked();
     void focusTransaction(const QModelIndex &);
+    void focusTransaction(const uint256 &txid);
 };
 
 #endif // BITCOIN_QT_TRANSACTIONVIEW_H

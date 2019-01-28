@@ -34,6 +34,7 @@ static void addCoin(const Amount nValue, const CWallet &wallet,
 // either for measurements."
 // (https://github.com/bitcoin/bitcoin/issues/7883#issuecomment-224807484)
 static void CoinSelection(benchmark::State &state) {
+    SelectParams(CBaseChainParams::REGTEST);
     const CWallet wallet(Params());
     std::vector<COutput> vCoins;
     LOCK(wallet.cs_wallet);
@@ -51,7 +52,7 @@ static void CoinSelection(benchmark::State &state) {
             addCoin(1000 * COIN, wallet, vCoins);
         addCoin(3 * COIN, wallet, vCoins);
 
-        std::set<std::pair<const CWalletTx *, unsigned int>> setCoinsRet;
+        std::set<CInputCoin> setCoinsRet;
         Amount nValueRet;
         bool success = wallet.SelectCoinsMinConf(1003 * COIN, 1, 6, 0, vCoins,
                                                  setCoinsRet, nValueRet);
@@ -61,4 +62,4 @@ static void CoinSelection(benchmark::State &state) {
     }
 }
 
-BENCHMARK(CoinSelection);
+BENCHMARK(CoinSelection, 650);

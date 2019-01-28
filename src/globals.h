@@ -6,9 +6,6 @@
 #define BITCOIN_GLOBALS_H
 
 #include <cstdint>
-
-/** The largest block size this node will accept. */
-extern uint64_t nMaxBlockSize;
-extern uint64_t nBlockPriorityPercentage;
+#include <string>
 
 #endif // BITCOIN_GLOBALS_H

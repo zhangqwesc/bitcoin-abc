@@ -310,7 +310,7 @@ public:
     //
     bool eof() const { return size() == 0; }
     CDataStream *rdbuf() { return this; }
-    int in_avail() { return size(); }
+    int in_avail() const { return size(); }
 
     void SetType(int n) { nType = n; }
     int GetType() const { return nType; }
@@ -324,17 +324,15 @@ public:
 
         // Read from the beginning of the buffer
         unsigned int nReadPosNext = nReadPos + nSize;
-        if (nReadPosNext >= vch.size()) {
-            if (nReadPosNext > vch.size()) {
-                throw std::ios_base::failure(
-                    "CDataStream::read(): end of data");
-            }
-            memcpy(pch, &vch[nReadPos], nSize);
+        if (nReadPosNext > vch.size()) {
+            throw std::ios_base::failure("CDataStream::read(): end of data");
+        }
+        memcpy(pch, &vch[nReadPos], nSize);
+        if (nReadPosNext == vch.size()) {
             nReadPos = 0;
             vch.clear();
             return;
         }
-        memcpy(pch, &vch[nReadPos], nSize);
         nReadPos = nReadPosNext;
     }
 
@@ -556,13 +554,13 @@ protected:
         unsigned int nAvail = vchBuf.size() - (nSrcPos - nReadPos) - nRewind;
         if (nAvail < readNow) readNow = nAvail;
         if (readNow == 0) return false;
-        size_t read = fread((void *)&vchBuf[pos], 1, readNow, src);
-        if (read == 0) {
+        size_t nBytes = fread((void *)&vchBuf[pos], 1, readNow, src);
+        if (nBytes == 0) {
             throw std::ios_base::failure(
                 feof(src) ? "CBufferedFile::Fill: end of file"
                           : "CBufferedFile::Fill: fread failed");
         } else {
-            nSrcPos += read;
+            nSrcPos += nBytes;
             return true;
         }
     }
@@ -610,7 +608,7 @@ public:
     }
 
     // return the current reading position
-    uint64_t GetPos() { return nReadPos; }
+    uint64_t GetPos() const { return nReadPos; }
 
     // rewind to a given reading position
     bool SetPos(uint64_t nPos) {

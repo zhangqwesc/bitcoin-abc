@@ -6,9 +6,11 @@
 #ifndef BITCOIN_TXDB_H
 #define BITCOIN_TXDB_H
 
+#include "blockfileinfo.h"
 #include "chain.h"
 #include "coins.h"
 #include "dbwrapper.h"
+#include "diskblockpos.h"
 
 #include "addressindex.h"
 #include "spentindex.h"
@@ -22,6 +24,7 @@
 class CBlockIndex;
 class CCoinsViewDBCursor;
 class uint256;
+class Config;
 
 //! No need to periodic flush if at least this much space still available.
 static constexpr int MAX_BLOCK_COINSDB_USAGE = 10;
@@ -71,7 +74,8 @@ protected:
     CDBWrapper db;
 
 public:
-    CCoinsViewDB(size_t nCacheSize, bool fMemory = false, bool fWipe = false);
+    explicit CCoinsViewDB(size_t nCacheSize, bool fMemory = false,
+                          bool fWipe = false);
 
     bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
     bool HaveCoin(const COutPoint &outpoint) const override;
@@ -110,7 +114,7 @@ private:
 /** Access to the block database (blocks/index/) */
 class CBlockTreeDB : public CDBWrapper {
 public:
-    CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe, bool compression, int maxOpenFiles, size_t maxFileSize);
+    explicit CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe, bool compression, int maxOpenFiles, size_t maxFileSize);
 
 private:
     CBlockTreeDB(const CBlockTreeDB &);
@@ -120,13 +124,13 @@ public:
     bool WriteBatchSync(
         const std::vector<std::pair<int, const CBlockFileInfo *>> &fileInfo,
         int nLastFile, const std::vector<const CBlockIndex *> &blockinfo);
-    bool ReadBlockFileInfo(int nFile, CBlockFileInfo &fileinfo);
+    bool ReadBlockFileInfo(int nFile, CBlockFileInfo &info);
     bool ReadLastBlockFile(int &nFile);
-    bool WriteReindexing(bool fReindex);
-    bool ReadReindexing(bool &fReindex);
+    bool WriteReindexing(bool fReindexing);
+    bool ReadReindexing(bool &fReindexing);
     bool ReadTxIndex(const uint256 &txid, CDiskTxPos &pos);
     bool WriteTxIndex(const std::vector<std::pair<uint256, CDiskTxPos>> &list);
-        bool ReadSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
+    bool ReadSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
     bool UpdateSpentIndex(const std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> >&vect);
     bool UpdateAddressUnspentIndex(const std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue > >&vect);
     bool ReadAddressUnspentIndex(uint160 addressHash, int type,
@@ -143,6 +147,7 @@ public:
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts(
+        const Config &config,
         std::function<CBlockIndex *(const uint256 &)> insertBlockIndex);
 };
 

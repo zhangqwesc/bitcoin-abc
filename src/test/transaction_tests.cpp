@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2018 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,7 +7,11 @@
 #include "data/tx_valid.json.h"
 #include "test/test_bitcoin.h"
 
+#include "chainparams.h" // For CChainParams
+#include "checkqueue.h"
 #include "clientversion.h"
+#include "config.h"
+#include "consensus/tx_verify.h"
 #include "consensus/validation.h"
 #include "core_io.h"
 #include "key.h"
@@ -16,22 +21,19 @@
 #include "script/script_error.h"
 #include "script/sign.h"
 #include "script/standard.h"
+#include "test/jsonutil.h"
 #include "test/scriptflags.h"
 #include "utilstrencodings.h"
-#include "validation.h" // For CheckRegularTransaction
+#include "validation.h"
 
 #include <map>
 #include <string>
 
-#include <boost/range/adaptor/reversed.hpp>
 #include <boost/test/unit_test.hpp>
 
 #include <univalue.h>
 
 typedef std::vector<uint8_t> valtype;
-
-// In script_tests.cpp
-extern UniValue read_json(const std::string &jsondata);
 
 BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
 
@@ -79,7 +81,8 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                 mapprevOutScriptPubKeys[outpoint] =
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
-                    mapprevOutValues[outpoint] = Amount(vinput[3].get_int64());
+                    mapprevOutValues[outpoint] =
+                        vinput[3].get_int64() * SATOSHI;
                 }
             }
             if (!fValid) {
@@ -99,6 +102,14 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                                 strTest);
             BOOST_CHECK(state.IsValid());
 
+            // Check that CheckCoinbase reject non-coinbase transactions and
+            // vice versa.
+            BOOST_CHECK_MESSAGE(!(tx.IsCoinBase()
+                                      ? CheckRegularTransaction(tx, state)
+                                      : CheckCoinbase(tx, state)),
+                                strTest);
+            BOOST_CHECK(state.IsInvalid());
+
             PrecomputedTransactionData txdata(tx);
             for (size_t i = 0; i < tx.vin.size(); i++) {
                 if (!mapprevOutScriptPubKeys.count(tx.vin[i].prevout)) {
@@ -106,18 +117,19 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                     break;
                 }
 
-                Amount amount(0);
+                Amount amount = Amount::zero();
                 if (mapprevOutValues.count(tx.vin[i].prevout)) {
-                    amount = Amount(mapprevOutValues[tx.vin[i].prevout]);
+                    amount = mapprevOutValues[tx.vin[i].prevout];
                 }
 
                 uint32_t verify_flags = ParseScriptFlags(test[2].get_str());
                 BOOST_CHECK_MESSAGE(
-                    VerifyScript(tx.vin[i].scriptSig,
-                                 mapprevOutScriptPubKeys[tx.vin[i].prevout],
-                                 verify_flags, TransactionSignatureChecker(
-                                                   &tx, i, amount, txdata),
-                                 &err),
+                    VerifyScript(
+                        tx.vin[i].scriptSig,
+                        mapprevOutScriptPubKeys[tx.vin[i].prevout],
+                        verify_flags,
+                        TransactionSignatureChecker(&tx, i, amount, txdata),
+                        &err),
                     strTest);
                 BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK,
                                     ScriptErrorString(err));
@@ -170,7 +182,8 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                 mapprevOutScriptPubKeys[outpoint] =
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
-                    mapprevOutValues[outpoint] = Amount(vinput[3].get_int64());
+                    mapprevOutValues[outpoint] =
+                        vinput[3].get_int64() * SATOSHI;
                 }
             }
             if (!fValid) {
@@ -193,7 +206,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                     break;
                 }
 
-                Amount amount(0);
+                Amount amount = Amount::zero();
                 if (0 != mapprevOutValues.count(tx.vin[i].prevout)) {
                     amount = mapprevOutValues[tx.vin[i].prevout];
                 }
@@ -301,15 +314,12 @@ BOOST_AUTO_TEST_CASE(test_Get) {
 
     CMutableTransaction t1;
     t1.vin.resize(3);
-    t1.vin[0].prevout.hash = dummyTransactions[0].GetId();
-    t1.vin[0].prevout.n = 1;
+    t1.vin[0].prevout = COutPoint(dummyTransactions[0].GetId(), 1);
     t1.vin[0].scriptSig << std::vector<uint8_t>(65, 0);
-    t1.vin[1].prevout.hash = dummyTransactions[1].GetId();
-    t1.vin[1].prevout.n = 0;
+    t1.vin[1].prevout = COutPoint(dummyTransactions[1].GetId(), 0);
     t1.vin[1].scriptSig << std::vector<uint8_t>(65, 0)
                         << std::vector<uint8_t>(33, 4);
-    t1.vin[2].prevout.hash = dummyTransactions[1].GetId();
-    t1.vin[2].prevout.n = 1;
+    t1.vin[2].prevout = COutPoint(dummyTransactions[1].GetId(), 1);
     t1.vin[2].scriptSig << std::vector<uint8_t>(65, 0)
                         << std::vector<uint8_t>(33, 4);
     t1.vout.resize(2);
@@ -327,10 +337,10 @@ void CreateCreditAndSpend(const CKeyStore &keystore, const CScript &outscript,
     CMutableTransaction outputm;
     outputm.nVersion = 1;
     outputm.vin.resize(1);
-    outputm.vin[0].prevout.SetNull();
+    outputm.vin[0].prevout = COutPoint();
     outputm.vin[0].scriptSig = CScript();
     outputm.vout.resize(1);
-    outputm.vout[0].nValue = Amount(1);
+    outputm.vout[0].nValue = SATOSHI;
     outputm.vout[0].scriptPubKey = outscript;
     CDataStream ssout(SER_NETWORK, PROTOCOL_VERSION);
     ssout << outputm;
@@ -343,10 +353,9 @@ void CreateCreditAndSpend(const CKeyStore &keystore, const CScript &outscript,
     CMutableTransaction inputm;
     inputm.nVersion = 1;
     inputm.vin.resize(1);
-    inputm.vin[0].prevout.hash = output->GetId();
-    inputm.vin[0].prevout.n = 0;
+    inputm.vin[0].prevout = COutPoint(output->GetId(), 0);
     inputm.vout.resize(1);
-    inputm.vout[0].nValue = Amount(1);
+    inputm.vout[0].nValue = SATOSHI;
     inputm.vout[0].scriptPubKey = CScript();
     bool ret =
         SignSignature(keystore, *output, inputm, 0, SigHashType().withForkId());
@@ -393,6 +402,90 @@ void ReplaceRedeemScript(CScript &script, const CScript &redeemScript) {
     stack.back() =
         std::vector<uint8_t>(redeemScript.begin(), redeemScript.end());
     script = PushAll(stack);
+}
+
+BOOST_AUTO_TEST_CASE(test_big_transaction) {
+    CKey key;
+    key.MakeNewKey(false);
+    CBasicKeyStore keystore;
+    keystore.AddKeyPubKey(key, key.GetPubKey());
+    CScript scriptPubKey = CScript()
+                           << ToByteVector(key.GetPubKey()) << OP_CHECKSIG;
+
+    std::vector<SigHashType> sigHashes;
+    sigHashes.emplace_back(SIGHASH_NONE | SIGHASH_FORKID);
+    sigHashes.emplace_back(SIGHASH_SINGLE | SIGHASH_FORKID);
+    sigHashes.emplace_back(SIGHASH_ALL | SIGHASH_FORKID);
+    sigHashes.emplace_back(SIGHASH_NONE | SIGHASH_FORKID |
+                           SIGHASH_ANYONECANPAY);
+    sigHashes.emplace_back(SIGHASH_SINGLE | SIGHASH_FORKID |
+                           SIGHASH_ANYONECANPAY);
+    sigHashes.emplace_back(SIGHASH_ALL | SIGHASH_FORKID | SIGHASH_ANYONECANPAY);
+
+    CMutableTransaction mtx;
+    mtx.nVersion = 1;
+
+    // create a big transaction of 4500 inputs signed by the same key.
+    const static size_t OUTPUT_COUNT = 4500;
+    mtx.vout.reserve(OUTPUT_COUNT);
+
+    for (size_t ij = 0; ij < OUTPUT_COUNT; ij++) {
+        size_t i = mtx.vin.size();
+        uint256 prevId = uint256S(
+            "0000000000000000000000000000000000000000000000000000000000000100");
+        COutPoint outpoint(prevId, i);
+
+        mtx.vin.resize(mtx.vin.size() + 1);
+        mtx.vin[i].prevout = outpoint;
+        mtx.vin[i].scriptSig = CScript();
+
+        mtx.vout.emplace_back(1000 * SATOSHI, CScript() << OP_1);
+    }
+
+    // sign all inputs
+    for (size_t i = 0; i < mtx.vin.size(); i++) {
+        bool hashSigned =
+            SignSignature(keystore, scriptPubKey, mtx, i, 1000 * SATOSHI,
+                          sigHashes.at(i % sigHashes.size()));
+        BOOST_CHECK_MESSAGE(hashSigned, "Failed to sign test transaction");
+    }
+
+    CTransaction tx(mtx);
+
+    // check all inputs concurrently, with the cache
+    PrecomputedTransactionData txdata(tx);
+    boost::thread_group threadGroup;
+    CCheckQueue<CScriptCheck> scriptcheckqueue(128);
+    CCheckQueueControl<CScriptCheck> control(&scriptcheckqueue);
+
+    for (int i = 0; i < 20; i++) {
+        threadGroup.create_thread(boost::bind(
+            &CCheckQueue<CScriptCheck>::Thread, boost::ref(scriptcheckqueue)));
+    }
+
+    std::vector<Coin> coins;
+    for (size_t i = 0; i < mtx.vin.size(); i++) {
+        CTxOut out;
+        out.nValue = 1000 * SATOSHI;
+        out.scriptPubKey = scriptPubKey;
+        coins.emplace_back(std::move(out), 1, false);
+    }
+
+    for (size_t i = 0; i < mtx.vin.size(); i++) {
+        std::vector<CScriptCheck> vChecks;
+        CTxOut &out = coins[tx.vin[i].prevout.GetN()].GetTxOut();
+        CScriptCheck check(out.scriptPubKey, out.nValue, tx, i,
+                           MANDATORY_SCRIPT_VERIFY_FLAGS, false, txdata);
+        vChecks.push_back(CScriptCheck());
+        check.swap(vChecks.back());
+        control.Add(vChecks);
+    }
+
+    bool controlCheck = control.Wait();
+    BOOST_CHECK(controlCheck);
+
+    threadGroup.interrupt_all();
+    threadGroup.join_all();
 }
 
 BOOST_AUTO_TEST_CASE(test_witness) {
@@ -492,11 +585,12 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     CheckWithFlag(output2, input2, 0, false);
     BOOST_CHECK(*output1 == *output2);
     UpdateTransaction(
-        input1, 0, CombineSignatures(output1->vout[0].scriptPubKey,
-                                     MutableTransactionSignatureChecker(
-                                         &input1, 0, output1->vout[0].nValue),
-                                     DataFromTransaction(input1, 0),
-                                     DataFromTransaction(input2, 0)));
+        input1, 0,
+        CombineSignatures(output1->vout[0].scriptPubKey,
+                          MutableTransactionSignatureChecker(
+                              &input1, 0, output1->vout[0].nValue),
+                          DataFromTransaction(input1, 0),
+                          DataFromTransaction(input2, 0)));
     CheckWithFlag(output1, input1, STANDARD_SCRIPT_VERIFY_FLAGS, true);
 
     // P2SH 2-of-2 multisig
@@ -512,11 +606,12 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     CheckWithFlag(output2, input2, SCRIPT_VERIFY_P2SH, false);
     BOOST_CHECK(*output1 == *output2);
     UpdateTransaction(
-        input1, 0, CombineSignatures(output1->vout[0].scriptPubKey,
-                                     MutableTransactionSignatureChecker(
-                                         &input1, 0, output1->vout[0].nValue),
-                                     DataFromTransaction(input1, 0),
-                                     DataFromTransaction(input2, 0)));
+        input1, 0,
+        CombineSignatures(output1->vout[0].scriptPubKey,
+                          MutableTransactionSignatureChecker(
+                              &input1, 0, output1->vout[0].nValue),
+                          DataFromTransaction(input1, 0),
+                          DataFromTransaction(input2, 0)));
     CheckWithFlag(output1, input1, SCRIPT_VERIFY_P2SH, true);
     CheckWithFlag(output1, input1, STANDARD_SCRIPT_VERIFY_FLAGS, true);
 }
@@ -531,8 +626,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
 
     CMutableTransaction t;
     t.vin.resize(1);
-    t.vin[0].prevout.hash = dummyTransactions[0].GetId();
-    t.vin[0].prevout.n = 1;
+    t.vin[0].prevout = COutPoint(dummyTransactions[0].GetId(), 1);
     t.vin[0].scriptSig << std::vector<uint8_t>(65, 0);
     t.vout.resize(1);
     t.vout[0].nValue = 90 * CENT;
@@ -545,9 +639,9 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
 
     // Check dust with default relay fee:
     Amount nDustThreshold = 3 * 182 * dustRelayFee.GetFeePerK() / 1000;
-    BOOST_CHECK_EQUAL(nDustThreshold, Amount(546));
+    BOOST_CHECK_EQUAL(nDustThreshold, 546 * SATOSHI);
     // dust:
-    t.vout[0].nValue = nDustThreshold - Amount(1);
+    t.vout[0].nValue = nDustThreshold - SATOSHI;
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
     // not dust:
     t.vout[0].nValue = nDustThreshold;
@@ -555,12 +649,12 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
 
     // Check dust with odd relay fee to verify rounding:
     // nDustThreshold = 182 * 1234 / 1000 * 3
-    dustRelayFee = CFeeRate(Amount(1234));
+    dustRelayFee = CFeeRate(1234 * SATOSHI);
     // dust:
-    t.vout[0].nValue = Amount(672 - 1);
+    t.vout[0].nValue = (672 - 1) * SATOSHI;
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
     // not dust:
-    t.vout[0].nValue = Amount(672);
+    t.vout[0].nValue = 672 * SATOSHI;
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
     dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
 
@@ -568,30 +662,6 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
 
     // MAX_OP_RETURN_RELAY-byte TX_NULL_DATA (standard)
-    t.vout[0].scriptPubKey =
-        CScript() << OP_RETURN
-                  << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909"
-                              "a67962e0ea1f61deb649f6bc3f4cef3804678afdb0fe5548"
-                              "271967f1a67130b7105cd6a828e03909a67962e0ea1f61de"
-                              "b649f6bc3f4cef38");
-    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY, t.vout[0].scriptPubKey.size());
-    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
-
-    // MAX_OP_RETURN_RELAY+1-byte TX_NULL_DATA (non-standard)
-    t.vout[0].scriptPubKey =
-        CScript() << OP_RETURN
-                  << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909"
-                              "a67962e0ea1f61deb649f6bc3f4cef3804678afdb0fe5548"
-                              "271967f1a67130b7105cd6a828e03909a67962e0ea1f61de"
-                              "b649f6bc3f4cef3800");
-    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY + 1, t.vout[0].scriptPubKey.size());
-    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
-
-    /**
-     * Check acceptance of larger op_return when asked to.
-     */
-
-    // New default size of 223 byte is standard
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
                   << ParseHex("646578784062697477617463682e636f2092c558ed52c56d"
@@ -604,10 +674,10 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
                               "732ba6677520a893d75d9a966cb8f85dc301656b1635c631"
                               "f5d00d4adf73f2dd112ca75cf19754651909becfbe65aed1"
                               "3afb2ab8");
-    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY_LARGE, t.vout[0].scriptPubKey.size());
-    BOOST_CHECK(IsStandardTx(CTransaction(t), reason, true));
+    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY, t.vout[0].scriptPubKey.size());
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
 
-    // Larger than default size of 223 byte is non-standard
+    // MAX_OP_RETURN_RELAY+1-byte TX_NULL_DATA (non-standard)
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
                   << ParseHex("646578784062697477617463682e636f2092c558ed52c56d"
@@ -620,14 +690,13 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
                               "732ba6677520a893d75d9a966cb8f85dc301656b1635c631"
                               "f5d00d4adf73f2dd112ca75cf19754651909becfbe65aed1"
                               "3afb2ab800");
-    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY_LARGE + 1,
-                      t.vout[0].scriptPubKey.size());
-    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason, true));
+    BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY + 1, t.vout[0].scriptPubKey.size());
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
 
     /**
      * Check when a custom value is used for -datacarriersize .
      */
-    unsigned newMaxSize = MAX_OP_RETURN_RELAY + 7;
+    unsigned newMaxSize = 90;
     gArgs.ForceSetArg("-datacarriersize", std::to_string(newMaxSize));
 
     // Max user provided payload size is standard
@@ -638,8 +707,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
                               "271967f1a67130b7105cd6a828e03909a67962e0ea1f61de"
                               "b649f6bc3f4cef3877696e64657878");
     BOOST_CHECK_EQUAL(t.vout[0].scriptPubKey.size(), newMaxSize);
-    BOOST_CHECK(IsStandardTx(CTransaction(t), reason, false));
-    BOOST_CHECK(IsStandardTx(CTransaction(t), reason, true));
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
 
     // Max user provided payload size + 1 is non-standard
     t.vout[0].scriptPubKey =
@@ -649,8 +717,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
                               "271967f1a67130b7105cd6a828e03909a67962e0ea1f61de"
                               "b649f6bc3f4cef3877696e6465787800");
     BOOST_CHECK_EQUAL(t.vout[0].scriptPubKey.size(), newMaxSize + 1);
-    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason, false));
-    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason, true));
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
 
     // Clear custom confirguration.
     gArgs.ClearArg("-datacarriersize");
@@ -704,6 +771,43 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     t.vout[0].scriptPubKey = CScript() << OP_RETURN;
     t.vout[1].scriptPubKey = CScript() << OP_RETURN;
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+}
+
+BOOST_AUTO_TEST_CASE(txsize_activation_test) {
+    const Config &config = GetConfig();
+    const int32_t magneticAnomalyActivationHeight =
+        config.GetChainParams().GetConsensus().magneticAnomalyHeight;
+
+    // A minimaly sized transction.
+    CTransaction minTx;
+    CValidationState state;
+
+    BOOST_CHECK(ContextualCheckTransaction(
+        config, minTx, state, magneticAnomalyActivationHeight - 1, 5678, 1234));
+    BOOST_CHECK(!ContextualCheckTransaction(
+        config, minTx, state, magneticAnomalyActivationHeight, 5678, 1234));
+    BOOST_CHECK_EQUAL(state.GetRejectCode(), REJECT_INVALID);
+    BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-undersize");
+}
+
+BOOST_AUTO_TEST_CASE(tx_transaction_fee) {
+    std::vector<size_t> sizes = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
+    for (size_t inputs : sizes) {
+        for (size_t outputs : sizes) {
+            CMutableTransaction mtx;
+            mtx.vin.resize(inputs);
+            mtx.vout.resize(outputs);
+            CTransaction tx(mtx);
+            auto txBillableSize = tx.GetBillableSize();
+            auto txSize = tx.GetTotalSize();
+            BOOST_CHECK(txBillableSize > 0);
+            if (inputs > outputs) {
+                BOOST_CHECK(txBillableSize <= txSize);
+            } else {
+                BOOST_CHECK(txBillableSize >= txSize);
+            }
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

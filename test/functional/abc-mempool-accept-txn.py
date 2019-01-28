@@ -54,19 +54,20 @@ class FullBlockTest(ComparisonTestFramework):
 
     def add_options(self, parser):
         super().add_options(parser)
-        parser.add_option(
+        parser.add_argument(
             "--runbarelyexpensive", dest="runbarelyexpensive", default=True)
 
     def run_test(self):
         self.test = TestManager(self, self.options.tmpdir)
         self.test.add_all_connections(self.nodes)
-        # Start up network handling in another thread
-        NetworkThread().start()
+        network_thread_start()
         self.test.run()
 
     def add_transactions_to_block(self, block, tx_list):
         [tx.rehash() for tx in tx_list]
         block.vtx.extend(tx_list)
+        block.vtx = [block.vtx[0]] + \
+            sorted(block.vtx[1:], key=lambda tx: tx.get_id())
 
     # this is a little handier to use than the version in blocktools.py
     def create_tx(self, spend_tx, n, value, script=CScript([OP_TRUE])):

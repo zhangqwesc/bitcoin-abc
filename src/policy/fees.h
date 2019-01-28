@@ -166,9 +166,9 @@ public:
      * minSuccess
      * @param nBlockHeight the current block height
      */
-    double EstimateMedianVal(int confTarget, double sufficientTxVal,
-                             double minSuccess, bool requireGreater,
-                             unsigned int nBlockHeight);
+    CFeeRate EstimateMedianFeeRate(int confTarget, double sufficientTxVal,
+                                   double minSuccess, bool requireGreater,
+                                   unsigned int nBlockHeight);
 
     /** Return the max number of confirms we're tracking */
     unsigned int GetMaxConfirms() { return confAvg.size(); }
@@ -198,10 +198,9 @@ static const double MIN_SUCCESS_PCT = .95;
 static const double SUFFICIENT_FEETXS = 1;
 
 // Minimum and Maximum values for tracking feerates
-static constexpr Amount MIN_FEERATE(10);
-static const Amount MAX_FEERATE(int64_t(1e7));
+static constexpr Amount MIN_FEERATE(10 * SATOSHI);
+static const Amount MAX_FEERATE(int64_t(1e7) * SATOSHI);
 static const Amount INF_FEERATE(MAX_MONEY);
-static const Amount INF_PRIORITY(int64_t(1e9) * MAX_MONEY);
 
 // We have to lump transactions into buckets based on feerate, but we want to be
 // able to give accurate estimates over a large range of potential feerates.
@@ -221,7 +220,7 @@ public:
      * Create new BlockPolicyEstimator and initialize stats tracking classes
      * with default values.
      */
-    CBlockPolicyEstimator(const CFeeRate &minRelayFee);
+    CBlockPolicyEstimator();
 
     /** Process all the transactions that have been included in a block */
     void processBlock(unsigned int nBlockHeight,
@@ -248,23 +247,6 @@ public:
     CFeeRate estimateSmartFee(int confTarget, int *answerFoundAtTarget,
                               const CTxMemPool &pool);
 
-    /**
-     * Return a priority estimate.
-     * DEPRECATED
-     * Returns -1
-     */
-    double estimatePriority(int confTarget);
-
-    /**
-     * Estimate priority needed to get be included in a block within confTarget
-     * blocks.
-     * DEPRECATED
-     * Returns -1 unless mempool is currently limited then returns INF_PRIORITY
-     * answerFoundAtTarget is set to confTarget
-     */
-    double estimateSmartPriority(int confTarget, int *answerFoundAtTarget,
-                                 const CTxMemPool &pool);
-
     /** Write estimation data to a file */
     void Write(CAutoFile &fileout);
 
@@ -273,7 +255,6 @@ public:
 
 private:
     //!< Passed to constructor to avoid dependency on main
-    CFeeRate minTrackedFee;
     unsigned int nBestSeenHeight;
     struct TxStatsInfo {
         unsigned int blockHeight;
@@ -294,7 +275,7 @@ private:
 class FeeFilterRounder {
 public:
     /** Create new FeeFilterRounder */
-    FeeFilterRounder(const CFeeRate &minIncrementalFee);
+    explicit FeeFilterRounder(const CFeeRate &minIncrementalFee);
 
     /** Quantize a minimum fee for privacy purpose before broadcast **/
     Amount round(const Amount currentMinFee);

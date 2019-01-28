@@ -1,8 +1,10 @@
 // Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2018 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #include "addrman.h"
 #include "chainparams.h"
+#include "clientversion.h"
 #include "config.h"
 #include "hash.h"
 #include "net.h"
@@ -54,6 +56,18 @@ public:
         CAddrInfo info = CAddrInfo(addr, resolved);
         s << info;
     }
+};
+
+class NetTestConfig : public DummyConfig {
+public:
+    bool SetMaxBlockSize(uint64_t maxBlockSize) override {
+        nMaxBlockSize = maxBlockSize;
+        return true;
+    }
+    uint64_t GetMaxBlockSize() const override { return nMaxBlockSize; }
+
+private:
+    uint64_t nMaxBlockSize;
 };
 
 CDataStream AddrmanToStream(CAddrManSerializationMock &_addrman) {
@@ -157,13 +171,15 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
 
     // Test that fFeeler is false by default.
     std::unique_ptr<CNode> pnode1(new CNode(id++, NODE_NETWORK, height, hSocket,
-                                            addr, 0, 0, pszDest, fInboundIn));
+                                            addr, 0, 0, CAddress(), pszDest,
+                                            fInboundIn));
     BOOST_CHECK(pnode1->fInbound == false);
     BOOST_CHECK(pnode1->fFeeler == false);
 
     fInboundIn = true;
     std::unique_ptr<CNode> pnode2(new CNode(id++, NODE_NETWORK, height, hSocket,
-                                            addr, 1, 1, pszDest, fInboundIn));
+                                            addr, 1, 1, CAddress(), pszDest,
+                                            fInboundIn));
     BOOST_CHECK(pnode2->fInbound == true);
     BOOST_CHECK(pnode2->fFeeler == false);
 }
@@ -179,27 +195,19 @@ BOOST_AUTO_TEST_CASE(test_getSubVersionEB) {
     BOOST_CHECK_EQUAL(getSubVersionEB(0), "0.0");
 }
 
-BOOST_AUTO_TEST_CASE(test_userAgentLength) {
-    GlobalConfig config;
+BOOST_AUTO_TEST_CASE(test_userAgent) {
+    NetTestConfig config;
 
     config.SetMaxBlockSize(8000000);
-    std::string long_uacomment = "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very very very very "
-                                 "very very very very very very long comment";
-    gArgs.ForceSetMultiArg("-uacomment", long_uacomment);
+    const std::string uacomment = "A very nice comment";
+    gArgs.ForceSetMultiArg("-uacomment", uacomment);
 
-    BOOST_CHECK_EQUAL(userAgent(config).size(), MAX_SUBVERSION_LENGTH);
-    BOOST_CHECK_EQUAL(userAgent(config),
-                      "/Bitcoin ABC:0.17.0(EB8.0; very very very very very "
-                      "very very very very very very very very very very very "
-                      "very very very very very very very very very very very "
-                      "very very very very very very very very very very very "
-                      "very very very very very very very ve)/");
+    const std::string versionMessage =
+        "/Bitcoin ABC:" + std::to_string(CLIENT_VERSION_MAJOR) + "." +
+        std::to_string(CLIENT_VERSION_MINOR) + "." +
+        std::to_string(CLIENT_VERSION_REVISION) + "(EB8.0; " + uacomment + ")/";
+
+    BOOST_CHECK_EQUAL(userAgent(config), versionMessage);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

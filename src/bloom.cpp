@@ -30,26 +30,26 @@
  * See https://en.wikipedia.org/wiki/Bloom_filter for an explanation of these
  * formulas.
  */
-CBloomFilter::CBloomFilter(unsigned int nElements, double nFPRate,
-                           unsigned int nTweakIn, uint8_t nFlagsIn)
-    : vData(std::min((unsigned int)(-1 / LN2SQUARED * nElements * log(nFPRate)),
-                     MAX_BLOOM_FILTER_SIZE * 8) /
+CBloomFilter::CBloomFilter(uint32_t nElements, double nFPRate,
+                           uint32_t nTweakIn, uint8_t nFlagsIn)
+    : vData(std::min<uint32_t>(-1 / LN2SQUARED * nElements * log(nFPRate),
+                               MAX_BLOOM_FILTER_SIZE * 8) /
             8),
       isFull(false), isEmpty(true),
-      nHashFuncs(std::min((unsigned int)(vData.size() * 8 / nElements * LN2),
-                          MAX_HASH_FUNCS)),
+      nHashFuncs(std::min<uint32_t>(vData.size() * 8 / nElements * LN2,
+                                    MAX_HASH_FUNCS)),
       nTweak(nTweakIn), nFlags(nFlagsIn) {}
 
 // Private constructor used by CRollingBloomFilter
-CBloomFilter::CBloomFilter(unsigned int nElements, double nFPRate,
-                           unsigned int nTweakIn)
-    : vData((unsigned int)(-1 / LN2SQUARED * nElements * log(nFPRate)) / 8),
+CBloomFilter::CBloomFilter(uint32_t nElements, double nFPRate,
+                           uint32_t nTweakIn)
+    : vData(uint32_t(-1 / LN2SQUARED * nElements * log(nFPRate)) / 8),
       isFull(false), isEmpty(true),
-      nHashFuncs((unsigned int)(vData.size() * 8 / nElements * LN2)),
+      nHashFuncs(uint32_t(vData.size() * 8 / nElements * LN2)),
       nTweak(nTweakIn), nFlags(BLOOM_UPDATE_NONE) {}
 
-inline unsigned int
-CBloomFilter::Hash(unsigned int nHashNum,
+inline uint32_t
+CBloomFilter::Hash(uint32_t nHashNum,
                    const std::vector<uint8_t> &vDataToHash) const {
     // 0xFBA4C795 chosen as it guarantees a reasonable bit difference between
     // nHashNum values.
@@ -58,9 +58,12 @@ CBloomFilter::Hash(unsigned int nHashNum,
 }
 
 void CBloomFilter::insert(const std::vector<uint8_t> &vKey) {
-    if (isFull) return;
-    for (unsigned int i = 0; i < nHashFuncs; i++) {
-        unsigned int nIndex = Hash(i, vKey);
+    if (isFull) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < nHashFuncs; i++) {
+        uint32_t nIndex = Hash(i, vKey);
         // Sets bit nIndex of vData
         vData[nIndex >> 3] |= (1 << (7 & nIndex));
     }
@@ -80,12 +83,18 @@ void CBloomFilter::insert(const uint256 &hash) {
 }
 
 bool CBloomFilter::contains(const std::vector<uint8_t> &vKey) const {
-    if (isFull) return true;
-    if (isEmpty) return false;
-    for (unsigned int i = 0; i < nHashFuncs; i++) {
-        unsigned int nIndex = Hash(i, vKey);
+    if (isFull) {
+        return true;
+    }
+    if (isEmpty) {
+        return false;
+    }
+    for (uint32_t i = 0; i < nHashFuncs; i++) {
+        uint32_t nIndex = Hash(i, vKey);
         // Checks bit nIndex of vData
-        if (!(vData[nIndex >> 3] & (1 << (7 & nIndex)))) return false;
+        if (!(vData[nIndex >> 3] & (1 << (7 & nIndex)))) {
+            return false;
+        }
     }
     return true;
 }
@@ -108,7 +117,7 @@ void CBloomFilter::clear() {
     isEmpty = true;
 }
 
-void CBloomFilter::reset(unsigned int nNewTweak) {
+void CBloomFilter::reset(uint32_t nNewTweak) {
     clear();
     nTweak = nNewTweak;
 }
@@ -122,12 +131,19 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction &tx) {
     bool fFound = false;
     // Match if the filter contains the hash of tx for finding tx when they
     // appear in a block
-    if (isFull) return true;
-    if (isEmpty) return false;
-    const uint256 &txid = tx.GetId();
-    if (contains(txid)) fFound = true;
+    if (isFull) {
+        return true;
+    }
+    if (isEmpty) {
+        return false;
+    }
 
-    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+    const TxId &txid = tx.GetId();
+    if (contains(txid)) {
+        fFound = true;
+    }
+
+    for (size_t i = 0; i < tx.vout.size(); i++) {
         const CTxOut &txout = tx.vout[i];
         // Match if the filter contains any arbitrary script data element in any
         // scriptPubKey in tx. If this matches, also add the specific output
@@ -139,29 +155,36 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction &tx) {
         std::vector<uint8_t> data;
         while (pc < txout.scriptPubKey.end()) {
             opcodetype opcode;
-            if (!txout.scriptPubKey.GetOp(pc, opcode, data)) break;
+            if (!txout.scriptPubKey.GetOp(pc, opcode, data)) {
+                break;
+            }
             if (data.size() != 0 && contains(data)) {
                 fFound = true;
-                if ((nFlags & BLOOM_UPDATE_MASK) == BLOOM_UPDATE_ALL)
+                if ((nFlags & BLOOM_UPDATE_MASK) == BLOOM_UPDATE_ALL) {
                     insert(COutPoint(txid, i));
-                else if ((nFlags & BLOOM_UPDATE_MASK) ==
-                         BLOOM_UPDATE_P2PUBKEY_ONLY) {
+                } else if ((nFlags & BLOOM_UPDATE_MASK) ==
+                           BLOOM_UPDATE_P2PUBKEY_ONLY) {
                     txnouttype type;
                     std::vector<std::vector<uint8_t>> vSolutions;
                     if (Solver(txout.scriptPubKey, type, vSolutions) &&
-                        (type == TX_PUBKEY || type == TX_MULTISIG))
+                        (type == TX_PUBKEY || type == TX_MULTISIG)) {
                         insert(COutPoint(txid, i));
+                    }
                 }
                 break;
             }
         }
     }
 
-    if (fFound) return true;
+    if (fFound) {
+        return true;
+    }
 
     for (const CTxIn &txin : tx.vin) {
         // Match if the filter contains an outpoint tx spends
-        if (contains(txin.prevout)) return true;
+        if (contains(txin.prevout)) {
+            return true;
+        }
 
         // Match if the filter contains any arbitrary script data element in any
         // scriptSig in tx
@@ -169,8 +192,12 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction &tx) {
         std::vector<uint8_t> data;
         while (pc < txin.scriptSig.end()) {
             opcodetype opcode;
-            if (!txin.scriptSig.GetOp(pc, opcode, data)) break;
-            if (data.size() != 0 && contains(data)) return true;
+            if (!txin.scriptSig.GetOp(pc, opcode, data)) {
+                break;
+            }
+            if (data.size() != 0 && contains(data)) {
+                return true;
+            }
         }
     }
 
@@ -180,20 +207,19 @@ bool CBloomFilter::IsRelevantAndUpdate(const CTransaction &tx) {
 void CBloomFilter::UpdateEmptyFull() {
     bool full = true;
     bool empty = true;
-    for (unsigned int i = 0; i < vData.size(); i++) {
-        full &= vData[i] == 0xff;
-        empty &= vData[i] == 0;
+    for (const auto d : vData) {
+        full &= (d == 0xff);
+        empty &= (d == 0);
     }
     isFull = full;
     isEmpty = empty;
 }
 
-CRollingBloomFilter::CRollingBloomFilter(unsigned int nElements,
-                                         double fpRate) {
+CRollingBloomFilter::CRollingBloomFilter(uint32_t nElements, double fpRate) {
     double logFpRate = log(fpRate);
     /* The optimal number of hash functions is log(fpRate) / log(0.5), but
      * restrict it to the range 1-50. */
-    nHashFuncs = std::max(1, std::min((int)round(logFpRate / log(0.5)), 50));
+    nHashFuncs = std::max(1, std::min<int>(round(logFpRate / log(0.5)), 50));
     /* In this rolling bloom filter, we'll store between 2 and 3 generations of
      * nElements / 2 entries. */
     nEntriesPerGeneration = (nElements + 1) / 2;
@@ -212,8 +238,8 @@ CRollingBloomFilter::CRollingBloomFilter(unsigned int nElements,
      * exp(logFpRate / nHashFuncs))
      */
     uint32_t nFilterBits =
-        (uint32_t)ceil(-1.0 * nHashFuncs * nMaxElements /
-                       log(1.0 - exp(logFpRate / nHashFuncs)));
+        uint32_t(ceil(-1.0 * nHashFuncs * nMaxElements /
+                      log(1.0 - exp(logFpRate / nHashFuncs))));
     data.clear();
     /* For each data element we need to store 2 bits. If both bits are 0, the
      * bit is treated as unset. If the bits are (01), (10), or (11), the bit is
@@ -226,7 +252,7 @@ CRollingBloomFilter::CRollingBloomFilter(unsigned int nElements,
 
 /* Similar to CBloomFilter::Hash */
 static inline uint32_t
-RollingBloomHash(unsigned int nHashNum, uint32_t nTweak,
+RollingBloomHash(uint32_t nHashNum, uint32_t nTweak,
                  const std::vector<uint8_t> &vDataToHash) {
     return MurmurHash3(nHashNum * 0xFBA4C795 + nTweak, vDataToHash);
 }
@@ -238,8 +264,8 @@ void CRollingBloomFilter::insert(const std::vector<uint8_t> &vKey) {
         if (nGeneration == 4) {
             nGeneration = 1;
         }
-        uint64_t nGenerationMask1 = -(uint64_t)(nGeneration & 1);
-        uint64_t nGenerationMask2 = -(uint64_t)(nGeneration >> 1);
+        uint64_t nGenerationMask1 = -uint64_t(nGeneration & 1);
+        uint64_t nGenerationMask2 = -uint64_t(nGeneration >> 1);
         /* Wipe old entries that used this generation number. */
         for (uint32_t p = 0; p < data.size(); p += 2) {
             uint64_t p1 = data[p], p2 = data[p + 1];
@@ -256,10 +282,10 @@ void CRollingBloomFilter::insert(const std::vector<uint8_t> &vKey) {
         uint32_t pos = (h >> 6) % data.size();
         /* The lowest bit of pos is ignored, and set to zero for the first bit,
          * and to one for the second. */
-        data[pos & ~1] = (data[pos & ~1] & ~(((uint64_t)1) << bit)) |
-                         ((uint64_t)(nGeneration & 1)) << bit;
-        data[pos | 1] = (data[pos | 1] & ~(((uint64_t)1) << bit)) |
-                        ((uint64_t)(nGeneration >> 1)) << bit;
+        data[pos & ~1] = (data[pos & ~1] & ~(uint64_t(1) << bit)) |
+                         uint64_t(nGeneration & 1) << bit;
+        data[pos | 1] = (data[pos | 1] & ~(uint64_t(1) << bit)) |
+                        uint64_t(nGeneration >> 1) << bit;
     }
 }
 
@@ -291,8 +317,7 @@ void CRollingBloomFilter::reset() {
     nTweak = GetRand(std::numeric_limits<unsigned int>::max());
     nEntriesThisGeneration = 0;
     nGeneration = 1;
-    for (std::vector<uint64_t>::iterator it = data.begin(); it != data.end();
-         it++) {
-        *it = 0;
+    for (auto &d : data) {
+        d = 0;
     }
 }

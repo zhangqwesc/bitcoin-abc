@@ -108,8 +108,7 @@ static int AppInitRPC(int argc, char *argv[]) {
     // Parameters
     //
     gArgs.ParseParameters(argc, argv);
-    if (argc < 2 || gArgs.IsArgSet("-?") || gArgs.IsArgSet("-h") ||
-        gArgs.IsArgSet("-help") || gArgs.IsArgSet("-version")) {
+    if (argc < 2 || HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
         std::string strUsage =
             strprintf(_("%s RPC client version"), _(PACKAGE_NAME)) + " " +
             FormatFullVersion() + "\n";
@@ -151,7 +150,7 @@ static int AppInitRPC(int argc, char *argv[]) {
     // Check for -testnet or -regtest parameter (BaseParams() calls are only
     // valid after this clause)
     try {
-        SelectBaseParams(ChainNameFromCommandLine());
+        SelectBaseParams(gArgs.GetChainName());
     } catch (const std::exception &e) {
         fprintf(stderr, "Error: %s\n", e.what());
         return EXIT_FAILURE;

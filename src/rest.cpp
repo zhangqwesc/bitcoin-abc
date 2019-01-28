@@ -37,7 +37,10 @@ static const struct {
     enum RetFormat rf;
     const char *name;
 } rf_names[] = {
-    {RF_UNDEF, ""}, {RF_BINARY, "bin"}, {RF_HEX, "hex"}, {RF_JSON, "json"},
+    {RF_UNDEF, ""},
+    {RF_BINARY, "bin"},
+    {RF_HEX, "hex"},
+    {RF_JSON, "json"},
 };
 
 struct CCoin {
@@ -45,7 +48,8 @@ struct CCoin {
     CTxOut out;
 
     CCoin() : nHeight(0) {}
-    CCoin(Coin in) : nHeight(in.GetHeight()), out(std::move(in.GetTxOut())) {}
+    explicit CCoin(Coin in)
+        : nHeight(in.GetHeight()), out(std::move(in.GetTxOut())) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -138,9 +142,9 @@ static bool rest_headers(Config &config, HTTPRequest *req,
     boost::split(path, param, boost::is_any_of("/"));
 
     if (path.size() != 2) {
-        return RESTERR(req, HTTP_BAD_REQUEST, "No header count specified. Use "
-                                              "/rest/headers/<count>/"
-                                              "<hash>.<ext>.");
+        return RESTERR(req, HTTP_BAD_REQUEST,
+                       "No header count specified. Use "
+                       "/rest/headers/<count>/<hash>.<ext>.");
     }
 
     long count = strtol(path[0].c_str(), nullptr, 10);
@@ -235,7 +239,7 @@ static bool rest_block(const Config &config, HTTPRequest *req,
         }
 
         pblockindex = mapBlockIndex[hash];
-        if (fHavePruned && !(pblockindex->nStatus & BLOCK_HAVE_DATA) &&
+        if (fHavePruned && !pblockindex->nStatus.hasData() &&
             pblockindex->nTx > 0) {
             return RESTERR(req, HTTP_NOT_FOUND,
                            hashStr + " not available (pruned data)");
@@ -398,9 +402,11 @@ static bool rest_tx(Config &config, HTTPRequest *req,
         return RESTERR(req, HTTP_BAD_REQUEST, "Invalid hash: " + hashStr);
     }
 
+    const TxId txid(hash);
+
     CTransactionRef tx;
     uint256 hashBlock = uint256();
-    if (!GetTransaction(config, hash, tx, hashBlock, true)) {
+    if (!GetTransaction(config, txid, tx, hashBlock, true)) {
         return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
     }
 
@@ -561,13 +567,13 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
     std::vector<bool> hits;
     bitmap.resize((vOutPoints.size() + 7) / 8);
     {
-        LOCK2(cs_main, mempool.cs);
+        LOCK2(cs_main, g_mempool.cs);
 
         CCoinsView viewDummy;
         CCoinsViewCache view(&viewDummy);
 
         CCoinsViewCache &viewChain = *pcoinsTip;
-        CCoinsViewMemPool viewMempool(&viewChain, mempool);
+        CCoinsViewMemPool viewMempool(&viewChain, g_mempool);
 
         if (fCheckMemPool) {
             // switch cache backend to db+mempool in case user likes to query
@@ -579,7 +585,7 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
             Coin coin;
             bool hit = false;
             if (view.GetCoin(vOutPoints[i], coin) &&
-                !mempool.isSpent(vOutPoints[i])) {
+                !g_mempool.isSpent(vOutPoints[i])) {
                 hit = true;
                 outs.emplace_back(std::move(coin));
             }
@@ -626,26 +632,24 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
 
             // pack in some essentials
             // use more or less the same output as mentioned in Bip64
-            objGetUTXOResponse.push_back(
-                Pair("chainHeight", chainActive.Height()));
-            objGetUTXOResponse.push_back(Pair(
-                "chaintipHash", chainActive.Tip()->GetBlockHash().GetHex()));
-            objGetUTXOResponse.push_back(
-                Pair("bitmap", bitmapStringRepresentation));
+            objGetUTXOResponse.pushKV("chainHeight", chainActive.Height());
+            objGetUTXOResponse.pushKV(
+                "chaintipHash", chainActive.Tip()->GetBlockHash().GetHex());
+            objGetUTXOResponse.pushKV("bitmap", bitmapStringRepresentation);
 
             UniValue utxos(UniValue::VARR);
             for (const CCoin &coin : outs) {
                 UniValue utxo(UniValue::VOBJ);
-                utxo.push_back(Pair("height", int32_t(coin.nHeight)));
-                utxo.push_back(Pair("value", ValueFromAmount(coin.out.nValue)));
+                utxo.pushKV("height", int32_t(coin.nHeight));
+                utxo.pushKV("value", ValueFromAmount(coin.out.nValue));
 
                 // include the script in a json output
                 UniValue o(UniValue::VOBJ);
                 ScriptPubKeyToJSON(config, coin.out.scriptPubKey, o, true);
-                utxo.push_back(Pair("scriptPubKey", o));
+                utxo.pushKV("scriptPubKey", o);
                 utxos.push_back(utxo);
             }
-            objGetUTXOResponse.push_back(Pair("utxos", utxos));
+            objGetUTXOResponse.pushKV("utxos", utxos);
 
             // return json string
             std::string strJSON = objGetUTXOResponse.write() + "\n";

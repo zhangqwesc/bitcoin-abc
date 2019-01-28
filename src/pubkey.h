@@ -10,6 +10,8 @@
 #include "serialize.h"
 #include "uint256.h"
 
+#include <boost/range/adaptor/sliced.hpp>
+
 #include <stdexcept>
 #include <vector>
 
@@ -29,12 +31,12 @@ const unsigned int BIP32_EXTKEY_SIZE = 74;
 class CKeyID : public uint160 {
 public:
     CKeyID() : uint160() {}
-    CKeyID(const uint160 &in) : uint160(in) {}
+    explicit CKeyID(const uint160 &in) : uint160(in) {}
 };
 
 typedef uint256 ChainCode;
 
-/** An encapsulated public key. */
+/** An encapsulated secp256k1 public key. */
 class CPubKey {
 private:
     /**
@@ -72,7 +74,9 @@ public:
     }
 
     //! Construct a public key from a byte vector.
-    CPubKey(const std::vector<uint8_t> &_vch) { Set(_vch.begin(), _vch.end()); }
+    explicit CPubKey(const std::vector<uint8_t> &_vch) {
+        Set(_vch.begin(), _vch.end());
+    }
 
     //! Simple read-only vector-like interface to the pubkey data.
     unsigned int size() const { return GetLen(vch[0]); }
@@ -132,17 +136,22 @@ public:
     bool IsCompressed() const { return size() == 33; }
 
     /**
-     * Verify a DER signature (~72 bytes).
+     * Verify a DER-serialized ECDSA signature (~72 bytes).
      * If this public key is not fully valid, the return value will be false.
      */
-    bool Verify(const uint256 &hash, const std::vector<uint8_t> &vchSig) const;
+    bool VerifyECDSA(const uint256 &hash,
+                     const std::vector<uint8_t> &vchSig) const;
 
     /**
-     * Check whether a signature is normalized (lower-S).
+     * Check whether a DER-serialized ECDSA signature is normalized (lower-S).
      */
-    static bool CheckLowS(const std::vector<uint8_t> &vchSig);
+    static bool
+    CheckLowS(const boost::sliced_range<const std::vector<uint8_t>> &vchSig);
+    static bool CheckLowS(const std::vector<uint8_t> &vchSig) {
+        return CheckLowS(vchSig | boost::adaptors::sliced(0, vchSig.size()));
+    }
 
-    //! Recover a public key from a compact signature.
+    //! Recover a public key from a compact ECDSA signature.
     bool RecoverCompact(const uint256 &hash,
                         const std::vector<uint8_t> &vchSig);
 

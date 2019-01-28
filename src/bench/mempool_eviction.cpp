@@ -51,9 +51,9 @@ static void MempoolEviction(benchmark::State &state) {
 
     CMutableTransaction tx4 = CMutableTransaction();
     tx4.vin.resize(2);
-    tx4.vin[0].prevout.SetNull();
+    tx4.vin[0].prevout = COutPoint();
     tx4.vin[0].scriptSig = CScript() << OP_4;
-    tx4.vin[1].prevout.SetNull();
+    tx4.vin[1].prevout = COutPoint();
     tx4.vin[1].scriptSig = CScript() << OP_4;
     tx4.vout.resize(2);
     tx4.vout[0].scriptPubKey = CScript() << OP_4 << OP_EQUAL;
@@ -65,7 +65,7 @@ static void MempoolEviction(benchmark::State &state) {
     tx5.vin.resize(2);
     tx5.vin[0].prevout = COutPoint(tx4.GetId(), 0);
     tx5.vin[0].scriptSig = CScript() << OP_4;
-    tx5.vin[1].prevout.SetNull();
+    tx5.vin[1].prevout = COutPoint();
     tx5.vin[1].scriptSig = CScript() << OP_5;
     tx5.vout.resize(2);
     tx5.vout[0].scriptPubKey = CScript() << OP_5 << OP_EQUAL;
@@ -77,7 +77,7 @@ static void MempoolEviction(benchmark::State &state) {
     tx6.vin.resize(2);
     tx6.vin[0].prevout = COutPoint(tx4.GetId(), 1);
     tx6.vin[0].scriptSig = CScript() << OP_4;
-    tx6.vin[1].prevout.SetNull();
+    tx6.vin[1].prevout = COutPoint();
     tx6.vin[1].scriptSig = CScript() << OP_6;
     tx6.vout.resize(2);
     tx6.vout[0].scriptPubKey = CScript() << OP_6 << OP_EQUAL;
@@ -97,7 +97,7 @@ static void MempoolEviction(benchmark::State &state) {
     tx7.vout[1].scriptPubKey = CScript() << OP_7 << OP_EQUAL;
     tx7.vout[1].nValue = 10 * COIN;
 
-    CTxMemPool pool(CFeeRate(Amount(1000)));
+    CTxMemPool pool;
 
     CTransaction t1(tx1);
     CTransaction t2(tx2);
@@ -108,16 +108,16 @@ static void MempoolEviction(benchmark::State &state) {
     CTransaction t7(tx1);
 
     while (state.KeepRunning()) {
-        AddTx(t1, Amount(10000LL), pool);
-        AddTx(t2, Amount(5000LL), pool);
-        AddTx(t3, Amount(20000LL), pool);
-        AddTx(t4, Amount(7000LL), pool);
-        AddTx(t5, Amount(1000LL), pool);
-        AddTx(t6, Amount(1100LL), pool);
-        AddTx(t7, Amount(9000LL), pool);
+        AddTx(t1, 10000 * SATOSHI, pool);
+        AddTx(t2, 5000 * SATOSHI, pool);
+        AddTx(t3, 20000 * SATOSHI, pool);
+        AddTx(t4, 7000 * SATOSHI, pool);
+        AddTx(t5, 1000 * SATOSHI, pool);
+        AddTx(t6, 1100 * SATOSHI, pool);
+        AddTx(t7, 9000 * SATOSHI, pool);
         pool.TrimToSize(pool.DynamicMemoryUsage() * 3 / 4);
         pool.TrimToSize(t1.GetTotalSize());
     }
 }
 
-BENCHMARK(MempoolEviction);
+BENCHMARK(MempoolEviction, 41000);

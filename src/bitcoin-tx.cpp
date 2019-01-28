@@ -44,7 +44,7 @@ static int AppInitRawTx(int argc, char *argv[]) {
     // Check for -testnet or -regtest parameter (Params() calls are only valid
     // after this clause)
     try {
-        SelectParams(ChainNameFromCommandLine());
+        SelectParams(gArgs.GetChainName());
     } catch (const std::exception &e) {
         fprintf(stderr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
@@ -52,8 +52,7 @@ static int AppInitRawTx(int argc, char *argv[]) {
 
     fCreateBlank = gArgs.GetBoolArg("-create", false);
 
-    if (argc < 2 || gArgs.IsArgSet("-?") || gArgs.IsArgSet("-h") ||
-        gArgs.IsArgSet("-help")) {
+    if (argc < 2 || HelpRequested(gArgs)) {
         // First part of help message is specific to this utility
         std::string strUsage =
             strprintf(_("%s bitcoin-tx utility version"), _(PACKAGE_NAME)) +
@@ -101,15 +100,17 @@ static int AppInitRawTx(int argc, char *argv[]) {
             "outmultisig=VALUE:REQUIRED:PUBKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]",
             _("Add Pay To n-of-m Multi-sig output to TX. n = REQUIRED, m = "
               "PUBKEYS") +
-                ". " + _("Optionally add the \"S\" flag to wrap the output in "
-                         "a pay-to-script-hash."));
+                ". " +
+                _("Optionally add the \"S\" flag to wrap the output in a "
+                  "pay-to-script-hash."));
         strUsage += HelpMessageOpt(
             "sign=SIGHASH-FLAGS",
             _("Add zero or more signatures to transaction") + ". " +
                 _("This command requires JSON registers:") +
                 _("prevtxs=JSON object") + ", " + _("privatekeys=JSON object") +
-                ". " + _("See signrawtransaction docs for format of sighash "
-                         "flags, JSON objects."));
+                ". " +
+                _("See signrawtransaction docs for format of sighash flags, "
+                  "JSON objects."));
         fprintf(stdout, "%s", strUsage.c_str());
 
         strUsage = HelpMessageGroup(_("Register Commands:"));
@@ -242,7 +243,7 @@ static void MutateTxAddInput(CMutableTransaction &tx,
         throw std::runtime_error("invalid TX input txid");
     }
 
-    uint256 txid(uint256S(strTxid));
+    TxId txid(uint256S(strTxid));
 
     static const unsigned int minTxOutSz = 9;
     static const unsigned int maxVout = MAX_TX_SIZE / minTxOutSz;
@@ -399,7 +400,7 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
 
 static void MutateTxAddOutData(CMutableTransaction &tx,
                                const std::string &strInput) {
-    Amount value(0);
+    Amount value = Amount::zero();
 
     // separate [VALUE:]DATA in string
     size_t pos = strInput.find(':');
@@ -519,24 +520,6 @@ static bool findSigHashFlags(SigHashType &sigHashType,
     return false;
 }
 
-uint256 ParseHashUO(std::map<std::string, UniValue> &o, std::string strKey) {
-    if (!o.count(strKey)) {
-        return uint256();
-    }
-
-    return ParseHashUV(o[strKey], strKey);
-}
-
-std::vector<uint8_t> ParseHexUO(std::map<std::string, UniValue> &o,
-                                std::string strKey) {
-    if (!o.count(strKey)) {
-        std::vector<uint8_t> emptyVec;
-        return emptyVec;
-    }
-
-    return ParseHexUV(o[strKey], strKey);
-}
-
 static Amount AmountFromValue(const UniValue &value) {
     if (!value.isNum() && !value.isStr()) {
         throw std::runtime_error("Amount is not a number or string");
@@ -546,7 +529,7 @@ static Amount AmountFromValue(const UniValue &value) {
     if (!ParseFixedPoint(value.getValStr(), 8, &n)) {
         throw std::runtime_error("Invalid amount");
     }
-    Amount amount = Amount(n);
+    Amount amount = n * SATOSHI;
 
     if (!MoneyRange(amount)) {
         throw std::runtime_error("Amount out of range");
@@ -615,7 +598,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
             throw std::runtime_error("prevtxs internal object typecheck fail");
         }
 
-        uint256 txid = ParseHashUV(prevOut["txid"], "txid");
+        TxId txid(ParseHashUV(prevOut["txid"], "txid"));
 
         int nOut = atoi(prevOut["vout"].getValStr());
         if (nOut < 0) {
@@ -639,7 +622,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
 
             CTxOut txout;
             txout.scriptPubKey = scriptPubKey;
-            txout.nValue = Amount(0);
+            txout.nValue = Amount::zero();
             if (prevOut.exists("amount")) {
                 txout.nValue = AmountFromValue(prevOut["amount"]);
             }

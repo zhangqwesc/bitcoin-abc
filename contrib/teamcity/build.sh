@@ -31,21 +31,23 @@ if [[ ! -z "${DISABLE_WALLET}" ]]; then
 fi
 
 ../configure "${CONFIGURE_FLAGS[@]}"
+
+# Run build
 make -j ${THREADS}
-make install
 
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# Run unit tests
+make check
 
-# Run tests
-./src/test/test_bitcoin --log_format=JUNIT > test_bitcoin.xml
+# Run util tests
+./test/util/bitcoin-util-test.py
 
 mkdir -p output/
-
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [[ ! -z "${DISABLE_WALLET}" ]]; then
 	echo "Skipping rpc testing due to disabled wallet functionality."
 elif [[ "${BRANCH}" == "master" ]]; then
-	./test/functional/test_runner.py --extended --jobs=${THREADS} --tmpdirprefix=output
+	./test/functional/test_runner.py --cutoff=600 --tmpdirprefix=output
 else
-	./test/functional/test_runner.py --jobs=${THREADS} --tmpdirprefix=output
+	./test/functional/test_runner.py --tmpdirprefix=output
 fi
 

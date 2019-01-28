@@ -17,13 +17,13 @@ static void UpdateUTXOSet(const CBlock &block, CCoinsViewCache &view,
                           CBlockUndo &blockundo,
                           const CChainParams &chainparams, uint32_t nHeight) {
     auto &coinbaseTx = *block.vtx[0];
-    UpdateCoins(coinbaseTx, view, nHeight);
+    UpdateCoins(view, coinbaseTx, nHeight);
 
     for (size_t i = 1; i < block.vtx.size(); i++) {
         auto &tx = *block.vtx[1];
 
         blockundo.vtxundo.push_back(CTxUndo());
-        UpdateCoins(tx, view, blockundo.vtxundo.back(), nHeight);
+        UpdateCoins(view, tx, blockundo.vtxundo.back(), nHeight);
     }
 
     view.SetBestBlock(block.GetHash());
@@ -58,15 +58,14 @@ BOOST_AUTO_TEST_CASE(connect_utxo_extblock) {
     tx.vin.resize(1);
     tx.vin[0].scriptSig.resize(10);
     tx.vout.resize(1);
-    tx.vout[0].nValue = Amount(42);
+    tx.vout[0].nValue = 42 * SATOSHI;
     auto coinbaseTx = CTransaction(tx);
 
     block.vtx.resize(2);
     block.vtx[0] = MakeTransactionRef(tx);
 
     tx.vout[0].scriptPubKey = CScript() << OP_TRUE;
-    tx.vin[0].prevout.hash = InsecureRand256();
-    tx.vin[0].prevout.n = 0;
+    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
     tx.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
     tx.vin[0].scriptSig.resize(0);
     tx.nVersion = 2;
@@ -74,7 +73,7 @@ BOOST_AUTO_TEST_CASE(connect_utxo_extblock) {
     auto prevTx0 = CTransaction(tx);
     AddCoins(view, prevTx0, 100);
 
-    tx.vin[0].prevout.hash = prevTx0.GetId();
+    tx.vin[0].prevout = COutPoint(prevTx0.GetId(), 0);
     auto tx0 = CTransaction(tx);
     block.vtx[1] = MakeTransactionRef(tx0);
 

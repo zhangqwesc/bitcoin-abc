@@ -9,8 +9,8 @@
 #include "primitives/block.h"
 #include "txmempool.h"
 
-#include "boost/multi_index/ordered_index.hpp"
-#include "boost/multi_index_container.hpp"
+#include <boost/multi_index/ordered_index.hpp>
+#include <boost/multi_index_container.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -24,24 +24,35 @@ class CWallet;
 
 static const bool DEFAULT_PRINTPRIORITY = false;
 
+struct CBlockTemplateEntry {
+    CTransactionRef tx;
+    Amount fees;
+    int64_t sigOpCount;
+
+    CBlockTemplateEntry(CTransactionRef _tx, Amount _fees, int64_t _sigOpCount)
+        : tx(_tx), fees(_fees), sigOpCount(_sigOpCount){};
+};
+
 struct CBlockTemplate {
     CBlock block;
-    std::vector<Amount> vTxFees;
-    std::vector<int64_t> vTxSigOpsCount;
+
+    std::vector<CBlockTemplateEntry> entries;
 };
 
 // Container for tracking updates to ancestor feerate as we include (parent)
 // transactions in a block
 struct CTxMemPoolModifiedEntry {
-    CTxMemPoolModifiedEntry(CTxMemPool::txiter entry) {
+    explicit CTxMemPoolModifiedEntry(CTxMemPool::txiter entry) {
         iter = entry;
         nSizeWithAncestors = entry->GetSizeWithAncestors();
+        nBillableSizeWithAncestors = entry->GetBillableSizeWithAncestors();
         nModFeesWithAncestors = entry->GetModFeesWithAncestors();
         nSigOpCountWithAncestors = entry->GetSigOpCountWithAncestors();
     }
 
     CTxMemPool::txiter iter;
     uint64_t nSizeWithAncestors;
+    uint64_t nBillableSizeWithAncestors;
     Amount nModFeesWithAncestors;
     int64_t nSigOpCountWithAncestors;
 };
@@ -72,10 +83,8 @@ struct modifiedentry_iter {
 struct CompareModifiedEntry {
     bool operator()(const CTxMemPoolModifiedEntry &a,
                     const CTxMemPoolModifiedEntry &b) const {
-        double f1 = double(b.nSizeWithAncestors *
-                           a.nModFeesWithAncestors.GetSatoshis());
-        double f2 = double(a.nSizeWithAncestors *
-                           b.nModFeesWithAncestors.GetSatoshis());
+        double f1 = b.nSizeWithAncestors * (a.nModFeesWithAncestors / SATOSHI);
+        double f2 = a.nSizeWithAncestors * (b.nModFeesWithAncestors / SATOSHI);
         if (f1 == f2) {
             return CTxMemPool::CompareIteratorByHash()(a.iter, b.iter);
         }
@@ -89,8 +98,9 @@ struct CompareModifiedEntry {
 struct CompareTxIterByAncestorCount {
     bool operator()(const CTxMemPool::txiter &a,
                     const CTxMemPool::txiter &b) const {
-        if (a->GetCountWithAncestors() != b->GetCountWithAncestors())
+        if (a->GetCountWithAncestors() != b->GetCountWithAncestors()) {
             return a->GetCountWithAncestors() < b->GetCountWithAncestors();
+        }
         return CTxMemPool::CompareIteratorByHash()(a, b);
     }
 };
@@ -114,11 +124,12 @@ typedef indexed_modified_transaction_set::index<ancestor_score>::type::iterator
     modtxscoreiter;
 
 struct update_for_parent_inclusion {
-    update_for_parent_inclusion(CTxMemPool::txiter it) : iter(it) {}
+    explicit update_for_parent_inclusion(CTxMemPool::txiter it) : iter(it) {}
 
     void operator()(CTxMemPoolModifiedEntry &e) {
         e.nModFeesWithAncestors -= iter->GetFee();
         e.nSizeWithAncestors -= iter->GetTxSize();
+        e.nBillableSizeWithAncestors -= iter->GetTxBillableSize();
         e.nSigOpCountWithAncestors -= iter->GetSigOpCount();
     }
 
@@ -147,15 +158,16 @@ private:
     // Chain context for the block
     int nHeight;
     int64_t nLockTimeCutoff;
+    int64_t nMedianTimePast;
 
     const Config *config;
+    const CTxMemPool *mempool;
 
     // Variables used for addPriorityTxs
     int lastFewTxs;
-    bool blockFinished;
 
 public:
-    BlockAssembler(const Config &_config);
+    BlockAssembler(const Config &_config, const CTxMemPool &mempool);
     /** Construct a new block template with coinbase to scriptPubKeyIn */
     std::unique_ptr<CBlockTemplate>
     CreateNewBlock(const CScript &scriptPubKeyIn);
@@ -177,9 +189,16 @@ private:
      * statistics from the package selection (for logging statistics). */
     void addPackageTxs(int &nPackagesSelected, int &nDescendantsUpdated);
 
+    /** Enum for the results from TestForBlock */
+    enum class TestForBlockResult : uint8_t {
+        TXFits = 0,
+        TXCantFit = 1,
+        BlockFinished = 3,
+    };
+
     // helper function for addPriorityTxs
     /** Test if tx will still "fit" in the block */
-    bool TestForBlock(CTxMemPool::txiter iter);
+    TestForBlockResult TestForBlock(CTxMemPool::txiter iter);
     /** Test if tx still has unconfirmed parents not yet in block */
     bool isStillDependent(CTxMemPool::txiter iter);
 
@@ -187,7 +206,7 @@ private:
     /** Remove confirmed (inBlock) entries from given set */
     void onlyUnconfirmed(CTxMemPool::setEntries &testSet);
     /** Test if a new package would "fit" in the block */
-    bool TestPackage(uint64_t packageSize, int64_t packageSigOpsCost);
+    bool TestPackage(uint64_t packageSize, int64_t packageSigOpsCost) const;
     /** Perform checks on each transaction in a package:
      * locktime, serialized size (if necessary)
      * These checks should always succeed, and they're here

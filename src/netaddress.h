@@ -21,6 +21,7 @@ enum Network {
     NET_IPV4,
     NET_IPV6,
     NET_TOR,
+    NET_INTERNAL,
 
     NET_MAX,
 };
@@ -35,15 +36,22 @@ protected:
 
 public:
     CNetAddr();
-    CNetAddr(const struct in_addr &ipv4Addr);
-    void Init();
+    explicit CNetAddr(const struct in_addr &ipv4Addr);
     void SetIP(const CNetAddr &ip);
 
+private:
     /**
      * Set raw IPv4 or IPv6 address (in network byte order)
      * @note Only NET_IPV4 and NET_IPV6 are allowed for network.
      */
     void SetRaw(Network network, const uint8_t *data);
+
+public:
+    /**
+     * Transform an arbitrary string into a non-routable ipv6 address.
+     * Useful for mapping resolved addresses back to their source.
+     */
+    bool SetInternal(const std::string &name);
 
     // for Tor addresses
     bool SetSpecial(const std::string &strName);
@@ -81,6 +89,7 @@ public:
     bool IsTor() const;
     bool IsLocal() const;
     bool IsRoutable() const;
+    bool IsInternal() const;
     bool IsValid() const;
     enum Network GetNetwork() const;
     std::string ToString() const;
@@ -91,11 +100,14 @@ public:
     std::vector<uint8_t> GetGroup() const;
     int GetReachabilityFrom(const CNetAddr *paddrPartner = nullptr) const;
 
-    CNetAddr(const struct in6_addr &pipv6Addr, const uint32_t scope = 0);
+    explicit CNetAddr(const struct in6_addr &pipv6Addr,
+                      const uint32_t scope = 0);
     bool GetIn6Addr(struct in6_addr *pipv6Addr) const;
 
     friend bool operator==(const CNetAddr &a, const CNetAddr &b);
-    friend bool operator!=(const CNetAddr &a, const CNetAddr &b);
+    friend bool operator!=(const CNetAddr &a, const CNetAddr &b) {
+        return !(a == b);
+    }
     friend bool operator<(const CNetAddr &a, const CNetAddr &b);
 
     ADD_SERIALIZE_METHODS;
@@ -131,7 +143,9 @@ public:
     bool IsValid() const;
 
     friend bool operator==(const CSubNet &a, const CSubNet &b);
-    friend bool operator!=(const CSubNet &a, const CSubNet &b);
+    friend bool operator!=(const CSubNet &a, const CSubNet &b) {
+        return !(a == b);
+    }
     friend bool operator<(const CSubNet &a, const CSubNet &b);
 
     ADD_SERIALIZE_METHODS;
@@ -154,14 +168,14 @@ public:
     CService();
     CService(const CNetAddr &ip, unsigned short port);
     CService(const struct in_addr &ipv4Addr, unsigned short port);
-    CService(const struct sockaddr_in &addr);
-    void Init();
-    void SetPort(unsigned short portIn);
+    explicit CService(const struct sockaddr_in &addr);
     unsigned short GetPort() const;
     bool GetSockAddr(struct sockaddr *paddr, socklen_t *addrlen) const;
     bool SetSockAddr(const struct sockaddr *paddr);
     friend bool operator==(const CService &a, const CService &b);
-    friend bool operator!=(const CService &a, const CService &b);
+    friend bool operator!=(const CService &a, const CService &b) {
+        return !(a == b);
+    }
     friend bool operator<(const CService &a, const CService &b);
     std::vector<uint8_t> GetKey() const;
     std::string ToString() const;
@@ -169,7 +183,7 @@ public:
     std::string ToStringIPPort() const;
 
     CService(const struct in6_addr &ipv6Addr, unsigned short port);
-    CService(const struct sockaddr_in6 &addr);
+    explicit CService(const struct sockaddr_in6 &addr);
 
     ADD_SERIALIZE_METHODS;
 

@@ -23,7 +23,7 @@ Dependencies
 
 Install dependencies:
 
-    brew install automake berkeley-db4 libtool boost --c++11 miniupnpc openssl pkg-config protobuf --c++11 qt5 libevent
+    brew install automake berkeley-db libtool boost --c++11 miniupnpc openssl pkg-config protobuf --c++11 qt5 libevent
 
 In case you want to build the disk image with `make deploy` (.dmg / optional), you need RSVG
 
@@ -34,7 +34,7 @@ Build Bitcoin ABC
 
 1. Clone the Bitcoin ABC source code and cd into `bitcoin-abc`
 
-        git clone github.com/Bitcoin-ABC/bitcoin-abc
+        git clone https://github.com/Bitcoin-ABC/bitcoin-abc.git
         cd bitcoin-abc
 
 2.  Build bitcoin-abc:
@@ -43,8 +43,12 @@ Build Bitcoin ABC
 
     You can disable the GUI build by passing `--without-gui` to configure.
 
+    It is recommended to create a build directory to build out-of-tree. 
+
         ./autogen.sh
-        ./configure
+        mkdir build
+        cd build
+        ../configure
         make
 
 3.  It is recommended to build and run the unit tests:

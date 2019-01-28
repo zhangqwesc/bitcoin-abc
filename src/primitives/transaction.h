@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2018 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,63 +8,46 @@
 #define BITCOIN_PRIMITIVES_TRANSACTION_H
 
 #include "amount.h"
+#include "feerate.h"
+#include "primitives/txid.h"
 #include "script/script.h"
 #include "serialize.h"
-#include "uint256.h"
 
 static const int SERIALIZE_TRANSACTION = 0x00;
-
-/**
- * A TxId is the identifier of a transaction. Currently identical to TxHash but
- * differentiated for type safety.
- */
-struct TxId : public uint256 {
-    explicit TxId(const uint256 &b) : uint256(b) {}
-};
-
-/**
- * A TxHash is the double sha256 hash of the full transaction data.
- */
-struct TxHash : public uint256 {
-    explicit TxHash(const uint256 &b) : uint256(b) {}
-};
 
 /**
  * An outpoint - a combination of a transaction hash and an index n into its
  * vout.
  */
 class COutPoint {
-public:
-    uint256 hash;
+private:
+    TxId txid;
     uint32_t n;
 
-    COutPoint() { SetNull(); }
-    COutPoint(uint256 hashIn, uint32_t nIn) {
-        hash = hashIn;
-        n = nIn;
-    }
+public:
+    COutPoint() : txid(), n(-1) {}
+    COutPoint(uint256 txidIn, uint32_t nIn) : txid(TxId(txidIn)), n(nIn) {}
 
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(hash);
+        READWRITE(txid);
         READWRITE(n);
     }
 
-    void SetNull() {
-        hash.SetNull();
-        n = (uint32_t)-1;
-    }
-    bool IsNull() const { return (hash.IsNull() && n == (uint32_t)-1); }
+    bool IsNull() const { return txid.IsNull() && n == uint32_t(-1); }
+
+    const TxId &GetTxId() const { return txid; }
+    uint32_t GetN() const { return n; }
 
     friend bool operator<(const COutPoint &a, const COutPoint &b) {
-        int cmp = a.hash.Compare(b.hash);
+        int cmp = a.txid.Compare(b.txid);
         return cmp < 0 || (cmp == 0 && a.n < b.n);
     }
 
     friend bool operator==(const COutPoint &a, const COutPoint &b) {
-        return (a.hash == b.hash && a.n == b.n);
+        return (a.txid == b.txid && a.n == b.n);
     }
 
     friend bool operator!=(const COutPoint &a, const COutPoint &b) {
@@ -123,9 +107,11 @@ public:
     CTxIn() { nSequence = SEQUENCE_FINAL; }
 
     explicit CTxIn(COutPoint prevoutIn, CScript scriptSigIn = CScript(),
-                   uint32_t nSequenceIn = SEQUENCE_FINAL);
-    CTxIn(uint256 hashPrevTx, uint32_t nOut, CScript scriptSigIn = CScript(),
-          uint32_t nSequenceIn = SEQUENCE_FINAL);
+                   uint32_t nSequenceIn = SEQUENCE_FINAL)
+        : prevout(prevoutIn), scriptSig(scriptSigIn), nSequence(nSequenceIn) {}
+    CTxIn(TxId prevTxId, uint32_t nOut, CScript scriptSigIn = CScript(),
+          uint32_t nSequenceIn = SEQUENCE_FINAL)
+        : CTxIn(COutPoint(prevTxId, nOut), scriptSigIn, nSequenceIn) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -157,7 +143,8 @@ public:
 
     CTxOut() { SetNull(); }
 
-    CTxOut(const Amount &nValueIn, CScript scriptPubKeyIn);
+    CTxOut(Amount nValueIn, CScript scriptPubKeyIn)
+        : nValue(nValueIn), scriptPubKey(scriptPubKeyIn) {}
 
     ADD_SERIALIZE_METHODS;
 
@@ -168,11 +155,11 @@ public:
     }
 
     void SetNull() {
-        nValue = Amount(-1);
+        nValue = -SATOSHI;
         scriptPubKey.clear();
     }
 
-    bool IsNull() const { return (nValue == Amount(-1)); }
+    bool IsNull() const { return nValue == -SATOSHI; }
 
     Amount GetDustThreshold(const CFeeRate &minRelayTxFee) const {
         /**
@@ -186,7 +173,9 @@ public:
          * spend: so dust is a spendable txout less than 294*minRelayTxFee/1000
          * (in satoshis).
          */
-        if (scriptPubKey.IsUnspendable()) return Amount(0);
+        if (scriptPubKey.IsUnspendable()) {
+            return Amount::zero();
+        }
 
         size_t nSize = GetSerializeSize(*this, SER_DISK, 0);
 
@@ -311,6 +300,10 @@ public:
     // size)
     unsigned int CalculateModifiedSize(unsigned int nTxSize = 0) const;
 
+    // Computes an adjusted tx size so that the UTXIs are billed partially
+    // upfront.
+    size_t GetBillableSize() const;
+
     /**
      * Get the total transaction size in bytes.
      * @return Total transaction size in bytes
@@ -392,7 +385,7 @@ struct PrecomputedTransactionData {
         : hashPrevouts(txdata.hashPrevouts), hashSequence(txdata.hashSequence),
           hashOutputs(txdata.hashOutputs) {}
 
-    PrecomputedTransactionData(const CTransaction &tx);
+    explicit PrecomputedTransactionData(const CTransaction &tx);
 };
 
 #endif // BITCOIN_PRIMITIVES_TRANSACTION_H
