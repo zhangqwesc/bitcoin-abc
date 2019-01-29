@@ -1948,8 +1948,8 @@ static bool ConnectBlock(const Config &config, const CBlock &block,
     std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
     std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> > spentIndex;
 
-    for (size_t i = 0; i < block.vtx.size(); i++) {
-        const CTransaction &tx = *(block.vtx[i]);
+    for (const auto &ptx : block.vtx) {
+        const CTransaction &tx = *ptx;
 
         nInputs += tx.vin.size();
 
@@ -2085,12 +2085,6 @@ static bool ConnectBlock(const Config &config, const CBlock &block,
             }
         }
 
-        CTxUndo undoDummy;
-        if (i > 0) {
-            blockundo.vtxundo.push_back(CTxUndo());
-        }
-        UpdateCoins(view, tx, i == 0 ? undoDummy : blockundo.vtxundo.back(),
-                    pindex->nHeight);
         control.Add(vChecks);
 
         blockundo.vtxundo.push_back(CTxUndo());
