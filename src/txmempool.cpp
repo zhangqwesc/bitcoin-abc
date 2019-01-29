@@ -503,13 +503,13 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
         if (prevout.scriptPubKey.IsPayToScriptHash()) {
             std::vector<unsigned char> hashBytes(prevout.scriptPubKey.begin()+2, prevout.scriptPubKey.begin()+22);
             CMempoolAddressDeltaKey key(2, uint160(hashBytes), txhash, j, 1);
-            CMempoolAddressDelta delta(entry.GetTime(), Amount(prevout.nValue.GetSatoshis() * -1), input.prevout.hash, input.prevout.n);
+            CMempoolAddressDelta delta(entry.GetTime(), prevout.nValue * -1, input.prevout.GetTxId(), input.prevout.GetN());
             mapAddress.insert(std::make_pair(key, delta));
             inserted.push_back(key);
         } else if (prevout.scriptPubKey.IsPayToPublicKeyHash()) {
             std::vector<unsigned char> hashBytes(prevout.scriptPubKey.begin()+3, prevout.scriptPubKey.begin()+23);
             CMempoolAddressDeltaKey key(1, uint160(hashBytes), txhash, j, 1);
-            CMempoolAddressDelta delta(entry.GetTime(), Amount(prevout.nValue.GetSatoshis() * -1), input.prevout.hash, input.prevout.n);
+            CMempoolAddressDelta delta(entry.GetTime(), prevout.nValue * -1, input.prevout.GetTxId(), input.prevout.GetN());
             mapAddress.insert(std::make_pair(key, delta));
             inserted.push_back(key);
         }
@@ -589,7 +589,7 @@ void CTxMemPool::addSpentIndex(const CTxMemPoolEntry &entry, const CCoinsViewCac
             addressType = 0;
         }
 
-        CSpentIndexKey key = CSpentIndexKey(input.prevout.hash, input.prevout.n);
+        CSpentIndexKey key = CSpentIndexKey(input.prevout.GetTxId(), input.prevout.GetN());
         CSpentIndexValue value = CSpentIndexValue(txhash, j, -1, prevout.nValue, addressType, addressHash);
 
         mapSpent.insert(std::make_pair(key, value));

@@ -141,7 +141,7 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                 UniValue delta(UniValue::VOBJ);
 
                 CSpentIndexValue spentInfo;
-                CSpentIndexKey spentKey(input.prevout.hash, input.prevout.n);
+                CSpentIndexKey spentKey(input.prevout.GetTxId(), input.prevout.GetN());
 
                 if (GetSpentIndex(spentKey, spentInfo)) {
                     if (spentInfo.addressType == 1) {
@@ -153,8 +153,8 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                     }
                     delta.push_back(Pair("satoshis", -1 * spentInfo.satoshis.GetSatoshis()));
                     delta.push_back(Pair("index", (int)j));
-                    delta.push_back(Pair("prevtxid", input.prevout.hash.GetHex()));
-                    delta.push_back(Pair("prevout", (int)input.prevout.n));
+                    delta.push_back(Pair("prevtxid", input.prevout.GetTxId().GetHex()));
+                    delta.push_back(Pair("prevout", (int)input.prevout.GetN()));
 
                     inputs.push_back(delta);
                 } else {
@@ -798,7 +798,7 @@ UniValue getblockdeltas(const Config &config, const JSONRPCRequest& request)
     CBlock block;
     CBlockIndex* pblockindex = mapBlockIndex[hash];
 
-    if (fHavePruned && !(pblockindex->nStatus & BLOCK_HAVE_DATA) && pblockindex->nTx > 0)
+    if (fHavePruned && pblockindex->nTx > 0)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Block not available (pruned data)");
 
     if(!ReadBlockFromDisk(block, pblockindex, config))

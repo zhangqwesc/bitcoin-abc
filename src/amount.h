@@ -27,10 +27,10 @@ public:
     static constexpr Amount zero() { return Amount(0); }
     static constexpr Amount satoshi() { return Amount(1); }
 
-    int64_t Get() {
+    int64_t GetSatoshis() {
         return amount;
     }
-    int64_t Get() const {
+    int64_t GetSatoshis() const {
         return amount;
     }
 
